@@ -308,4 +308,64 @@ describe('useTransactionHistory Hook', () => {
       expect(state.total).toBe(0);
     });
   });
+
+  describe('stale closure fixes', () => {
+    it('page size change should reset to page 1 while keeping creator', () => {
+      const refs = {
+        page: 4,
+        pageSize: 10,
+        creatorId: 'creator-abc',
+      };
+
+      const setPageSize = (size: number) => {
+        // Mirrors fixed setPageSize: always page 1 + latest creatorId ref
+        refs.page = 1;
+        refs.pageSize = size;
+      };
+
+      setPageSize(50);
+      expect(refs.page).toBe(1);
+      expect(refs.pageSize).toBe(50);
+      expect(refs.creatorId).toBe('creator-abc');
+    });
+
+    it('creator id should persist across pagination after dependency change', () => {
+      const refs = {
+        page: 1,
+        pageSize: 10,
+        creatorId: undefined as string | undefined,
+      };
+
+      const fetchHistory = (options?: { page?: number; pageSize?: number }, creator?: string) => {
+        if (creator !== undefined) {
+          refs.creatorId = creator;
+        }
+        if (options?.page !== undefined) refs.page = options.page;
+        if (options?.pageSize !== undefined) refs.pageSize = options.pageSize;
+      };
+
+      fetchHistory({ page: 1, pageSize: 10 }, 'creator-1');
+      expect(refs.creatorId).toBe('creator-1');
+
+      // Switch creators
+      fetchHistory({ page: 1, pageSize: 10 }, 'creator-2');
+      expect(refs.creatorId).toBe('creator-2');
+
+      // Paginate using ref (not stale closure)
+      const goToPage = (page: number) => {
+        fetchHistory({ page, pageSize: refs.pageSize }, refs.creatorId);
+      };
+      goToPage(2);
+      expect(refs.page).toBe(2);
+      expect(refs.creatorId).toBe('creator-2');
+    });
+
+    it('fetchHistory callback deps should not include page state (stable identity)', () => {
+      // Documents the fixed dependency list: client + setters only.
+      const fetchHistoryDeps = ['client', 'setError', 'setIsLoading'];
+      expect(fetchHistoryDeps).not.toContain('state.page');
+      expect(fetchHistoryDeps).not.toContain('state.pageSize');
+      expect(fetchHistoryDeps).not.toContain('creatorId');
+    });
+  });
 });

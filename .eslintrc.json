@@ -3,7 +3,8 @@
   "extends": [
     "eslint:recommended",
     "plugin:@typescript-eslint/recommended",
-    "plugin:@typescript-eslint/strict"
+    "plugin:@typescript-eslint/strict",
+    "plugin:react-hooks/recommended"
   ],
   "parserOptions": {
     "ecmaVersion": "latest",
@@ -25,6 +26,11 @@
     "@typescript-eslint/no-invalid-void-type": "off",
     "no-dynamic-delete": "off",
     "prefer-const": "warn",
-    "no-useless-catch": "warn"
-  }
+    "no-useless-catch": "warn",
+    "react-hooks/rules-of-hooks": "error",
+    "react-hooks/exhaustive-deps": "warn"
+  },
+  "plugins": [
+    "react-hooks"
+  ]
 }

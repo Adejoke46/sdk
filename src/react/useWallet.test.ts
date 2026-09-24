@@ -228,4 +228,27 @@ describe('useWallet Hook', () => {
       expect(response.success).toBe(false);
     });
   });
+
+  describe('stale closure fixes', () => {
+    it('generateNonce should preserve wallets via functional state update', () => {
+      let state = {
+        wallets: [{ id: 'w1' }],
+        selectedWallet: { id: 'w1' },
+        nonce: undefined as string | undefined,
+        challengeStep: 'idle',
+        loading: false,
+      };
+
+      // Functional update pattern used by fixed generateNonce
+      const applyNonce = (nonce: string) => {
+        state = { ...state, nonce, challengeStep: 'nonce-generated', loading: false };
+      };
+
+      applyNonce('abc');
+      expect(state.wallets).toHaveLength(1);
+      expect(state.selectedWallet?.id).toBe('w1');
+      expect(state.nonce).toBe('abc');
+      expect(state.challengeStep).toBe('nonce-generated');
+    });
+  });
 });

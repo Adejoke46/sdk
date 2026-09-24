@@ -2,9 +2,15 @@
  * useTransactionHistory Hook
  *
  * Hook for fetching and managing transaction history with pagination support.
+ *
+ * Dependency chain (stable callbacks → refs for mutable reads):
+ * - `fetchHistory` depends only on `client` / context setters (stable identity).
+ * - Pagination helpers (`goToPage`, `nextPage`, `prevPage`, `setPageSize`, `refetch`)
+ *   call `fetchHistory` and read latest page/pageSize/creatorId/lastOptions via refs,
+ *   so they never capture stale closures or form circular dep loops with state.
  */
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { useDorisio } from './DorisioProvider';
 import { Transaction } from '../types/models';
 
@@ -81,16 +87,27 @@ export function useTransactionHistory(
   const [creatorId, setCreatorId] = useState<string | undefined>();
   const [lastOptions, setLastOptions] = useState(initialOptions);
 
+  // Refs hold latest mutable values so callbacks stay stable and never go stale.
+  const stateRef = useRef(state);
+  stateRef.current = state;
+  const creatorIdRef = useRef(creatorId);
+  creatorIdRef.current = creatorId;
+  const lastOptionsRef = useRef(lastOptions);
+  lastOptionsRef.current = lastOptions;
+
   const fetchHistory = useCallback(
     async (options?: TransactionHistoryOptions, creator?: string): Promise<Transaction[]> => {
       try {
         setState((s) => ({ ...s, loading: true, error: undefined }));
         setIsLoading(true);
 
-        const page = options?.page || state.page;
-        const pageSize = options?.pageSize || state.pageSize;
-        const endpoint = creator
-          ? `/api/v1/transactions/creator/${creator}`
+        const current = stateRef.current;
+        const page = options?.page ?? current.page;
+        const pageSize = options?.pageSize ?? current.pageSize;
+        // Explicit `undefined` clears creator filter; omit to keep last creatorId.
+        const resolvedCreator = creator !== undefined ? creator : creatorIdRef.current;
+        const endpoint = resolvedCreator
+          ? `/api/v1/transactions/creator/${resolvedCreator}`
           : '/api/v1/transactions/history';
         const query = `?page=${page}&pageSize=${pageSize}`;
 
@@ -113,8 +130,11 @@ export function useTransactionHistory(
           };
         });
 
-        setLastOptions({ page, pageSize });
-        setCreatorId(creator);
+        const nextOptions = { page, pageSize };
+        setLastOptions(nextOptions);
+        lastOptionsRef.current = nextOptions;
+        setCreatorId(resolvedCreator);
+        creatorIdRef.current = resolvedCreator;
 
         return (response.data as any).tips || [];
       } catch (err) {
@@ -126,60 +146,69 @@ export function useTransactionHistory(
         setIsLoading(false);
       }
     },
-    [client, setError, setIsLoading, state.page, state.pageSize]
+    [client, setError, setIsLoading]
   );
 
   const goToPage = useCallback(
     async (page: number): Promise<void> => {
       if (page < 1) return;
-      await fetchHistory({ page, pageSize: state.pageSize }, creatorId);
+      await fetchHistory({ page, pageSize: stateRef.current.pageSize }, creatorIdRef.current);
     },
-    [fetchHistory, state.pageSize, creatorId]
+    [fetchHistory]
   );
 
   const nextPage = useCallback(async (): Promise<void> => {
-    const hasMore = state.page * state.pageSize < state.total;
+    const { page, pageSize, total } = stateRef.current;
+    const hasMore = page * pageSize < total;
     if (hasMore) {
-      await goToPage(state.page + 1);
+      await goToPage(page + 1);
     }
-  }, [goToPage, state.page, state.pageSize, state.total]);
+  }, [goToPage]);
 
   const prevPage = useCallback(async (): Promise<void> => {
-    if (state.page > 1) {
-      await goToPage(state.page - 1);
+    const { page } = stateRef.current;
+    if (page > 1) {
+      await goToPage(page - 1);
     }
-  }, [goToPage, state.page]);
+  }, [goToPage]);
 
   const setPageSize = useCallback(
     async (size: number): Promise<void> => {
       if (size > 0 && size <= 100) {
-        await fetchHistory({ page: 1, pageSize: size }, creatorId);
+        // Page-size changes always reset to page 1 and keep the current creator.
+        await fetchHistory({ page: 1, pageSize: size }, creatorIdRef.current);
       }
     },
-    [fetchHistory, creatorId]
+    [fetchHistory]
   );
 
   const refetch = useCallback(async (): Promise<void> => {
-    await fetchHistory(lastOptions, creatorId);
-  }, [fetchHistory, lastOptions, creatorId]);
+    await fetchHistory(lastOptionsRef.current, creatorIdRef.current);
+  }, [fetchHistory]);
 
   const reset = useCallback((): void => {
-    setState({
+    const initial: UseTransactionHistoryState = {
       transactions: [],
       total: 0,
       page: 1,
       pageSize: 10,
       loading: false,
-    });
+    };
+    setState(initial);
+    stateRef.current = initial;
     setCreatorId(undefined);
+    creatorIdRef.current = undefined;
     setLastOptions(undefined);
+    lastOptionsRef.current = undefined;
   }, []);
 
   // Auto-fetch on mount
   useEffect(() => {
     if (autoFetch) {
-      fetchHistory(initialOptions);
+      void fetchHistory(initialOptions);
     }
+    // Intentionally mount-only; callers can refetch when inputs change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only autoFetch
   }, []);
 
   return {

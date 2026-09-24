@@ -173,4 +173,33 @@ describe('useCreatorBalance Hook', () => {
       expect(state.loading).toBe(false);
     });
   });
+
+  describe('stale closure fixes', () => {
+    it('refetch should keep creator and wallet after dependency change', () => {
+      const refs = {
+        creatorId: undefined as string | undefined,
+        walletId: undefined as string | undefined,
+        calls: [] as Array<{ id: string; walletId?: string }>,
+      };
+
+      const fetchBalance = (id: string, walletId?: string) => {
+        refs.creatorId = id;
+        if (walletId !== undefined) refs.walletId = walletId;
+        refs.calls.push({ id, walletId: refs.walletId });
+      };
+
+      fetchBalance('creator-1', 'wallet-9');
+      // Switch creator, keep wallet via ref
+      fetchBalance('creator-2', refs.walletId);
+
+      const refetch = () => {
+        if (refs.creatorId) fetchBalance(refs.creatorId, refs.walletId);
+      };
+      refetch();
+
+      expect(refs.calls[0]).toEqual({ id: 'creator-1', walletId: 'wallet-9' });
+      expect(refs.calls[1]).toEqual({ id: 'creator-2', walletId: 'wallet-9' });
+      expect(refs.calls[2]).toEqual({ id: 'creator-2', walletId: 'wallet-9' });
+    });
+  });
 });

@@ -3,9 +3,14 @@
  *
  * Hook for wallet management with challenge-response verification flow.
  * Handles wallet linking, verification, and unlinking.
+ *
+ * Dependency chain:
+ * - All async actions depend only on stable `client` / context setters.
+ * - Mutable challenge/nonce/wallet list state is updated via functional
+ *   `setState` and mirrored in `stateRef` so helpers never read a stale snapshot.
  */
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import { useDorisio } from './DorisioProvider';
 import { Wallet } from '../types/models';
 
@@ -45,9 +50,13 @@ export function useWallet(): UseWalletState & UseWalletActions {
     challengeStep: 'idle',
   });
 
+  const stateRef = useRef(state);
+  stateRef.current = state;
+
   const generateNonce = useCallback(
     async (publicKey: string): Promise<{ nonce: string; expiresIn: number }> => {
       try {
+        // Functional update avoids overwriting wallets/selection from a stale snapshot.
         setState((s) => ({ ...s, loading: true, error: undefined }));
         setIsLoading(true);
 
@@ -60,17 +69,25 @@ export function useWallet(): UseWalletState & UseWalletActions {
         }
 
         const data = response.data;
-        setState((s) => ({
-          ...s,
-          nonce: data.nonce,
-          challengeStep: 'nonce-generated',
-          loading: false,
-        }));
+        setState((s) => {
+          const next = {
+            ...s,
+            nonce: data.nonce as string,
+            challengeStep: 'nonce-generated' as const,
+            loading: false,
+          };
+          stateRef.current = next;
+          return next;
+        });
 
         return { nonce: data.nonce, expiresIn: data.expiresIn || 300 };
       } catch (err) {
         const error = err instanceof Error ? err.message : 'Failed to generate nonce';
-        setState((s) => ({ ...s, error, challengeStep: 'error', loading: false }));
+        setState((s) => {
+          const next = { ...s, error, challengeStep: 'error' as const, loading: false };
+          stateRef.current = next;
+          return next;
+        });
         setError({ message: error, code: 'NONCE_GENERATION_ERROR' });
         throw err;
       } finally {
@@ -86,23 +103,40 @@ export function useWallet(): UseWalletState & UseWalletActions {
         setState((s) => ({ ...s, loading: true, error: undefined }));
         setIsLoading(true);
 
-        const response = await client.request<any>('GET', `/api/v1/wallet/challenge/${nonce}`);
+        // Prefer explicit arg; fall back to latest generated nonce from ref.
+        const resolvedNonce = nonce || stateRef.current.nonce;
+        if (!resolvedNonce) {
+          throw new Error('No nonce available for challenge');
+        }
+
+        const response = await client.request<any>(
+          'GET',
+          `/api/v1/wallet/challenge/${resolvedNonce}`
+        );
 
         if (!response.success || !response.data) {
           throw new Error(response.error?.message || 'Failed to get challenge');
         }
 
         const data = response.data;
-        setState((s) => ({
-          ...s,
-          challengeStep: 'challenge-ready',
-          loading: false,
-        }));
+        setState((s) => {
+          const next = {
+            ...s,
+            challengeStep: 'challenge-ready' as const,
+            loading: false,
+          };
+          stateRef.current = next;
+          return next;
+        });
 
         return data.challenge || data;
       } catch (err) {
         const error = err instanceof Error ? err.message : 'Failed to get challenge';
-        setState((s) => ({ ...s, error, challengeStep: 'error', loading: false }));
+        setState((s) => {
+          const next = { ...s, error, challengeStep: 'error' as const, loading: false };
+          stateRef.current = next;
+          return next;
+        });
         setError({ message: error, code: 'CHALLENGE_ERROR' });
         throw err;
       } finally {
@@ -130,19 +164,27 @@ export function useWallet(): UseWalletState & UseWalletActions {
 
         const wallet = response.data;
 
-        setState((s) => ({
-          ...s,
-          wallets: [...s.wallets, wallet],
-          selectedWallet: wallet,
-          challengeStep: 'verified',
-          loading: false,
-          nonce: undefined,
-        }));
+        setState((s) => {
+          const next = {
+            ...s,
+            wallets: [...s.wallets, wallet],
+            selectedWallet: wallet,
+            challengeStep: 'verified' as const,
+            loading: false,
+            nonce: undefined,
+          };
+          stateRef.current = next;
+          return next;
+        });
 
         return wallet;
       } catch (err) {
         const error = err instanceof Error ? err.message : 'Failed to verify wallet';
-        setState((s) => ({ ...s, error, challengeStep: 'error', loading: false }));
+        setState((s) => {
+          const next = { ...s, error, challengeStep: 'error' as const, loading: false };
+          stateRef.current = next;
+          return next;
+        });
         setError({ message: error, code: 'WALLET_VERIFICATION_ERROR' });
         throw err;
       } finally {
@@ -168,16 +210,24 @@ export function useWallet(): UseWalletState & UseWalletActions {
         const data = response.data;
         const wallets = (data.wallets || data) as Wallet[];
 
-        setState((s) => ({
-          ...s,
-          wallets,
-          loading: false,
-        }));
+        setState((s) => {
+          const next = {
+            ...s,
+            wallets,
+            loading: false,
+          };
+          stateRef.current = next;
+          return next;
+        });
 
         return wallets;
       } catch (err) {
         const error = err instanceof Error ? err.message : 'Failed to list wallets';
-        setState((s) => ({ ...s, error, loading: false }));
+        setState((s) => {
+          const next = { ...s, error, loading: false };
+          stateRef.current = next;
+          return next;
+        });
         setError({ message: error, code: 'LIST_WALLETS_ERROR' });
         throw err;
       } finally {
@@ -188,7 +238,11 @@ export function useWallet(): UseWalletState & UseWalletActions {
   );
 
   const selectWallet = useCallback((wallet: Wallet) => {
-    setState((s) => ({ ...s, selectedWallet: wallet }));
+    setState((s) => {
+      const next = { ...s, selectedWallet: wallet };
+      stateRef.current = next;
+      return next;
+    });
   }, []);
 
   const unlinkWallet = useCallback(
@@ -203,15 +257,23 @@ export function useWallet(): UseWalletState & UseWalletActions {
           throw new Error(response.error?.message || 'Failed to unlink wallet');
         }
 
-        setState((s) => ({
-          ...s,
-          wallets: s.wallets.filter((w) => w.id !== walletId),
-          selectedWallet: s.selectedWallet?.id === walletId ? undefined : s.selectedWallet,
-          loading: false,
-        }));
+        setState((s) => {
+          const next = {
+            ...s,
+            wallets: s.wallets.filter((w) => w.id !== walletId),
+            selectedWallet: s.selectedWallet?.id === walletId ? undefined : s.selectedWallet,
+            loading: false,
+          };
+          stateRef.current = next;
+          return next;
+        });
       } catch (err) {
         const error = err instanceof Error ? err.message : 'Failed to unlink wallet';
-        setState((s) => ({ ...s, error, loading: false }));
+        setState((s) => {
+          const next = { ...s, error, loading: false };
+          stateRef.current = next;
+          return next;
+        });
         setError({ message: error, code: 'UNLINK_WALLET_ERROR' });
         throw err;
       } finally {
@@ -237,17 +299,25 @@ export function useWallet(): UseWalletState & UseWalletActions {
 
         const updatedWallet = response.data;
 
-        setState((s) => ({
-          ...s,
-          wallets: s.wallets.map((w) => (w.id === walletId ? updatedWallet : w)),
-          selectedWallet: s.selectedWallet?.id === walletId ? updatedWallet : s.selectedWallet,
-          loading: false,
-        }));
+        setState((s) => {
+          const next = {
+            ...s,
+            wallets: s.wallets.map((w) => (w.id === walletId ? updatedWallet : w)),
+            selectedWallet: s.selectedWallet?.id === walletId ? updatedWallet : s.selectedWallet,
+            loading: false,
+          };
+          stateRef.current = next;
+          return next;
+        });
 
         return updatedWallet;
       } catch (err) {
         const error = err instanceof Error ? err.message : 'Failed to rename wallet';
-        setState((s) => ({ ...s, error, loading: false }));
+        setState((s) => {
+          const next = { ...s, error, loading: false };
+          stateRef.current = next;
+          return next;
+        });
         setError({ message: error, code: 'RENAME_WALLET_ERROR' });
         throw err;
       } finally {
@@ -269,11 +339,19 @@ export function useWallet(): UseWalletState & UseWalletActions {
           throw new Error(response.error?.message || 'Failed to fetch balance');
         }
 
-        setState((s) => ({ ...s, loading: false }));
+        setState((s) => {
+          const next = { ...s, loading: false };
+          stateRef.current = next;
+          return next;
+        });
         return response.data;
       } catch (err) {
         const error = err instanceof Error ? err.message : 'Failed to fetch balance';
-        setState((s) => ({ ...s, error, loading: false }));
+        setState((s) => {
+          const next = { ...s, error, loading: false };
+          stateRef.current = next;
+          return next;
+        });
         setError({ message: error, code: 'GET_BALANCE_ERROR' });
         throw err;
       } finally {
@@ -284,11 +362,13 @@ export function useWallet(): UseWalletState & UseWalletActions {
   );
 
   const reset = useCallback(() => {
-    setState({
+    const initial: UseWalletState = {
       wallets: [],
       loading: false,
       challengeStep: 'idle',
-    });
+    };
+    setState(initial);
+    stateRef.current = initial;
   }, []);
 
   return {
