@@ -503,7 +503,7 @@ export class HttpClient {
       try {
         release = await this.connectionPool.acquire(options.signal);
         const startedAt = Date.now();
-        this.log('[DORISIO] request', {
+        this.logger('[DORISIO] request', {
           method: options.method,
           path,
           body: sanitize(options.body),
@@ -513,7 +513,7 @@ export class HttpClient {
         const response = await fetch(url, {
           method: options.method,
           headers,
-          body: options.body ? JSON.stringify(options.body) : undefined,
+          body: options.body ? this.serializer.serialize(options.body) : undefined,
           signal: options.signal
             ? AbortSignal.any([options.signal, AbortSignal.timeout(options.timeout ?? this.timeout)])
             : AbortSignal.timeout(options.timeout ?? this.timeout),
@@ -529,7 +529,18 @@ export class HttpClient {
         });
 
         if (!response.ok) {
-          const error = await response.json().catch(() => ({}));
+          let error: Record<string, unknown> = {};
+          try {
+            const errorText = await response.text();
+            error = errorText ? this.serializer.deserialize<Record<string, unknown>>(errorText) : {};
+          } catch {
+            // Fallback for mocks that only implement json()
+            try {
+              error = await (response as { json?: () => Promise<Record<string, unknown>> }).json?.() ?? {};
+            } catch {
+              // ignore
+            }
+          }
           const retryAfterHeader = response.headers?.get?.('Retry-After');
           let retryAfter: number | undefined;
           if (retryAfterHeader) {
@@ -544,14 +555,22 @@ export class HttpClient {
             }
           }
           throw new ApiError(
-            error.error || 'Request failed',
+            String(error.error) || 'Request failed',
             response.status,
-            error.code,
+            error.code as string | undefined,
             retryAfter
           );
         }
 
-        const data = (await response.json()) as T;
+        let data: T;
+        try {
+          const text = await response.text();
+          data = this.serializer.deserialize<T>(text);
+        } catch {
+          // Fallback for mocks that only implement json()
+          data = await (response as { json?: () => Promise<T> }).json?.() ?? (undefined as T);
+        }
+
         return await this.interceptors.executeResponseInterceptors(data);
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));
@@ -593,7 +612,7 @@ export class HttpClient {
             // action === 'throw' falls through to throw error
           } catch (handlerError) {
             // If error handler itself fails, log and continue with normal error handling
-            this.log('[DORISIO] error handler failed', { error: handlerError });
+            this.logger('[DORISIO] error handler failed', { error: handlerError });
           }
         }
 

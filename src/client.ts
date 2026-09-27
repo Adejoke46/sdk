@@ -7,6 +7,7 @@
  */
 
 import { HttpClient, RequestOptions, type HttpClientMode } from './http/http-client';
+import { FailoverManager, type EndpointConfig } from './http/failover-manager';
 import { getConfig } from './config';
 import { ApiResponse } from './types/api';
 import {
@@ -189,6 +190,15 @@ export class DorisioClient {
       this.httpClient.setHeader('Authorization', `Bearer ${this.token}`);
     }
 
+    // Initialize failover manager if multiple endpoints provided
+    if (config.endpoints && config.endpoints.length > 0) {
+      const allEndpoints = [config.baseUrl, ...config.endpoints];
+      this.failoverManager = new FailoverManager({
+        endpoints: allEndpoints,
+        healthCheckInterval: config.healthCheckInterval,
+      });
+    }
+
     this.bindMethods();
 
     // A 401 on any API call renews the session once and replays the request,
@@ -347,6 +357,54 @@ export class DorisioClient {
       this.apiVersionHandler.getCurrentVersion(),
       { path: requestPath, method: requestMethod }
     );
+  }
+
+  private async executeWithFailover<T>(
+    method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE',
+    path: string,
+    body?: unknown,
+    headers?: Record<string, string>,
+    options?: Partial<RequestOptions>
+  ): Promise<ApiResponse<T>> {
+    if (!this.failoverManager) {
+      return this.httpClient.request<ApiResponse<T>>(path, {
+        method,
+        body: body as Record<string, unknown>,
+        headers,
+        ...options,
+      });
+    }
+
+    let lastError: Error | undefined;
+    const endpoints = this.failoverManager.getEndpoints().map((e) => e.url);
+
+    for (const endpointUrl of endpoints) {
+      try {
+        // Create a temporary httpClient pointed at this endpoint
+        const tempClient = new HttpClient(endpointUrl, {
+          timeout: this.config.timeout,
+          retryAttempts: getConfig().retryAttempts,
+          mode: this.mode,
+        });
+        if (this.token) {
+          tempClient.setHeader('Authorization', `Bearer ${this.token}`);
+        }
+        const result = await tempClient.request<ApiResponse<T>>(path, {
+          method,
+          body: body as Record<string, unknown>,
+          headers,
+          ...options,
+        });
+        this.failoverManager.recordSuccess(endpointUrl);
+        return result;
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+        this.failoverManager.recordFailure(endpointUrl);
+        if (endpointUrl === endpoints[endpoints.length - 1]) break;
+      }
+    }
+
+    throw lastError ?? new Error('All endpoints failed');
   }
 
   /**

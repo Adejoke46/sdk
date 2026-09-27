@@ -36,6 +36,15 @@ export {
   type QueueProcessedResult,
 } from './http/offline-queue';
 export {
+  FailoverManager,
+  type EndpointConfig,
+  type FailoverManagerOptions,
+} from './http/failover-manager';
+export {
+  JsonSerializer,
+  type Serializer,
+} from './http/serializer';
+export {
   MetricsCollector,
   type MetricsCollectorOptions,
   type MetricsSummary,
