@@ -38,10 +38,13 @@ import * as verificationMethods from './client/verification';
 import * as authMethods from './client/auth';
 import { CreateWalletRequest, UpdateWalletRequest } from './types/models';
 import * as batchMethods from './client/batch-operations';
+import { GraphQLClient } from './graphql/graphql-client';
 import {
   ErrorHandler,
   Middleware,
 } from './types/errors';
+import type { MetricsCallback, MetricsSummary } from './lib/metrics';
+import type { OfflineEventType, OfflineEventListener } from './http/offline-queue';
 
 export type ClientMode = 'sandbox' | 'live' | 'production';
 
@@ -66,6 +69,26 @@ export interface ClientConfig {
   deduplicationWindow?: number;
   /** Custom error handler for error recovery strategies */
   errorHandler?: ErrorHandler;
+  /**
+   * Enable request queue with concurrency control and automatic 429 backoff.
+   */
+  enableRequestQueue?: boolean;
+  /**
+   * Maximum concurrent requests in flight when request queue is enabled (default: 5).
+   */
+  maxConcurrentRequests?: number;
+  /**
+   * Enable offline mutation queue.
+   */
+  enableOfflineQueue?: boolean;
+  /**
+   * Enable performance metrics collection.
+   */
+  enableMetrics?: boolean;
+  /**
+   * Optional callback invoked whenever a request metric is recorded.
+   */
+  metricsCallback?: MetricsCallback;
 }
 
 function normalizeClientMode(mode?: ClientMode): 'live' | 'sandbox' {
@@ -74,6 +97,7 @@ function normalizeClientMode(mode?: ClientMode): 'live' | 'sandbox' {
 }
 
 export class DorisioClient {
+  public readonly graphql: GraphQLClient;
   private config: ClientConfig & { timeout: number; mode: 'live' | 'sandbox' };
   private httpClient: HttpClient;
   private token?: string;
@@ -97,6 +121,11 @@ export class DorisioClient {
       deduplicateRequests: config.deduplicateRequests,
       deduplicationWindow: config.deduplicationWindow,
       errorHandler: config.errorHandler,
+      enableRequestQueue: config.enableRequestQueue,
+      maxConcurrentRequests: config.maxConcurrentRequests,
+      enableOfflineQueue: config.enableOfflineQueue,
+      enableMetrics: config.enableMetrics,
+      metricsCallback: config.metricsCallback,
     };
 
     this.token = config.token;
@@ -115,6 +144,19 @@ export class DorisioClient {
       deduplicateRequests: config.deduplicateRequests,
       deduplicationWindow: config.deduplicationWindow,
       errorHandler: this.errorHandler,
+      enableRequestQueue: config.enableRequestQueue,
+      maxConcurrentRequests: config.maxConcurrentRequests,
+      enableOfflineQueue: config.enableOfflineQueue,
+      enableMetrics: config.enableMetrics,
+      metricsCallback: config.metricsCallback,
+    });
+
+    this.graphql = new GraphQLClient({
+      baseUrl: this.config.baseUrl,
+      token: this.token,
+      timeout: this.config.timeout,
+      mode,
+      sandboxSeed: config.sandboxSeed,
     });
 
     if (this.token) {
@@ -192,6 +234,7 @@ export class DorisioClient {
     this.token = token;
     this.config.token = token;
     this.httpClient.setHeader('Authorization', `Bearer ${token}`);
+    this.graphql.setToken(token);
   }
 
   /**
@@ -201,6 +244,7 @@ export class DorisioClient {
     this.token = undefined;
     this.config.token = undefined;
     this.httpClient.removeHeader('Authorization');
+    this.graphql.clearToken();
   }
 
   /**
@@ -282,6 +326,7 @@ export class DorisioClient {
     this.mode = normalizeClientMode(mode);
     this.config.mode = this.mode;
     this.httpClient.setMode(mode as HttpClientMode);
+    this.graphql.setMode(this.mode);
   }
 
   /**
@@ -325,6 +370,50 @@ export class DorisioClient {
    */
   use(middleware: Middleware): void {
     this.middleware.push(middleware);
+  }
+
+  /**
+   * Get performance metrics summary
+   */
+  getMetrics(): MetricsSummary {
+    return this.httpClient.getMetrics();
+  }
+
+  /**
+   * Check if client considers itself online
+   */
+  isOnline(): boolean {
+    return this.httpClient.isOnline();
+  }
+
+  /**
+   * Set online status (triggers offline queue replay when switching to true)
+   */
+  setOnline(online: boolean): void {
+    this.httpClient.setOnline(online);
+  }
+
+  /**
+   * Get number of mutations currently queued offline
+   */
+  getOfflineQueueSize(): number {
+    return this.httpClient.getOfflineQueueSize();
+  }
+
+  /**
+   * Listen to offline events ('online', 'offline', 'queue-processed')
+   */
+  on(event: OfflineEventType, listener: OfflineEventListener): this {
+    this.httpClient.getOfflineQueue()?.on(event, listener);
+    return this;
+  }
+
+  /**
+   * Remove an offline event listener
+   */
+  off(event: OfflineEventType, listener: OfflineEventListener): this {
+    this.httpClient.getOfflineQueue()?.off(event, listener);
+    return this;
   }
 
   // ---------------------------------------------------------------------------

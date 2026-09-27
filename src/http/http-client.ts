@@ -10,7 +10,9 @@ import { ApiError, DorisioError, ErrorHandler, ErrorHandlerContext } from '../ty
 import { InterceptorManager } from './interceptors';
 import { generateRequestId, isRequestIdempotent, RetryConflictError } from './retry-manager';
 import { MockRouter, type SandboxHistoryEntry } from '../sandbox/mock-router';
-import { isRequestIdempotent } from './retry-manager';
+import { RequestQueue } from './request-queue';
+import { OfflineQueue } from './offline-queue';
+import { MetricsCollector, type MetricsCallback, type MetricsSummary } from '../lib/metrics';
 
 export type HttpClientMode = 'live' | 'sandbox' | 'production';
 
@@ -38,6 +40,10 @@ export interface RequestOptions {
    * omitted.
    */
   requestId?: string;
+  /**
+   * Method name for metrics tracking.
+   */
+  methodName?: string;
 }
 
 export interface HttpClientOptions {
@@ -60,6 +66,16 @@ export interface HttpClientOptions {
   deduplicationWindow?: number;
   /** Custom error handler for error recovery strategies */
   errorHandler?: ErrorHandler;
+  /** Enable request queue with concurrency control and automatic 429 backoff. */
+  enableRequestQueue?: boolean;
+  /** Maximum concurrent requests in flight when request queue is enabled (default: 5). */
+  maxConcurrentRequests?: number;
+  /** Enable offline mutation queue. */
+  enableOfflineQueue?: boolean;
+  /** Enable performance metrics collection. */
+  enableMetrics?: boolean;
+  /** Optional callback invoked whenever a request metric is recorded. */
+  metricsCallback?: MetricsCallback;
 }
 
 function normalizeMode(mode?: HttpClientMode): 'live' | 'sandbox' {
@@ -151,6 +167,9 @@ export class HttpClient {
   private deduplicationWindow: number;
   private deduplicationCache = new Map<string, CachedRequest>();
   private errorHandler?: ErrorHandler;
+  private requestQueue?: RequestQueue;
+  private offlineQueue?: OfflineQueue;
+  private metricsCollector: MetricsCollector;
 
   constructor(baseUrl: string, options?: HttpClientOptions) {
     this.baseUrl = baseUrl.replace(/\/$/, '');
@@ -174,6 +193,21 @@ export class HttpClient {
     this.errorHandler = options?.errorHandler;
     if (this.deduplicationWindow < 0) {
       throw new Error('deduplicationWindow must be greater than or equal to zero');
+    }
+
+    this.metricsCollector = new MetricsCollector({
+      enabled: options?.enableMetrics ?? false,
+      callback: options?.metricsCallback,
+    });
+
+    if (options?.enableRequestQueue) {
+      this.requestQueue = new RequestQueue({
+        maxConcurrentRequests: options?.maxConcurrentRequests ?? 5,
+      });
+    }
+
+    if (options?.enableOfflineQueue) {
+      this.offlineQueue = new OfflineQueue();
     }
   }
 
@@ -275,7 +309,15 @@ export class HttpClient {
     if (this.inFlightRequests.has(requestId)) {
       throw new RetryConflictError(requestId);
     }
-    try {
+    this.inFlightRequests.add(requestId);
+
+    const startTime = Date.now();
+    const methodName = options.methodName || options.method;
+    let success = false;
+    let statusCode: number | undefined;
+    let rateLimited = false;
+
+    const executeInternal = async (): Promise<T> => {
       const seeded: RequestOptions = {
         ...options,
         requestId,
@@ -289,7 +331,6 @@ export class HttpClient {
         if (cached && cached.expiresAt > Date.now()) return cached.promise as Promise<T>;
         if (cached) this.deduplicationCache.delete(key);
       }
-      this.inFlightRequests.add(requestId);
 
       const result = await this.executeDeduplication<T>(key, async () => {
         if (this.mode === 'sandbox') {
@@ -309,8 +350,48 @@ export class HttpClient {
         }
       });
       return result;
+    };
+
+    const executeWithQueue = (): Promise<T> => {
+      if (this.requestQueue) {
+        return this.requestQueue.enqueue(executeInternal);
+      }
+      return executeInternal();
+    };
+
+    const executeWithOffline = (): Promise<T> => {
+      if (this.offlineQueue) {
+        return this.offlineQueue.handleRequest(options.method, path, executeWithQueue);
+      }
+      return executeWithQueue();
+    };
+
+    try {
+      const result = await executeWithOffline();
+      success = true;
+      statusCode = 200;
+      return result;
+    } catch (error) {
+      if (error instanceof ApiError && error.statusCode !== undefined) {
+        statusCode = error.statusCode;
+        if (error.statusCode === 429) {
+          rateLimited = true;
+        }
+      }
+      throw error;
     } finally {
       this.inFlightRequests.delete(requestId);
+      if (this.metricsCollector.isEnabled()) {
+        const latency = Date.now() - startTime;
+        this.metricsCollector.record({
+          method: methodName,
+          path,
+          latency,
+          success,
+          statusCode,
+          rateLimited,
+        });
+      }
     }
   }
 
@@ -383,10 +464,10 @@ export class HttpClient {
     const headers = { ...this.defaultHeaders, ...options.headers };
 
     let lastError: Error | null = null;
-    const attempts = finalOptions.retries ?? this.retryAttempts;
+    const attempts = options.retries ?? this.retryAttempts;
     const canRetry = isRequestIdempotent({
-      method: finalOptions.method,
-      isIdempotent: finalOptions.isIdempotent,
+      method: options.method,
+      isIdempotent: options.isIdempotent,
       headers,
     });
 
@@ -563,5 +644,9 @@ export class HttpClient {
    */
   getOfflineQueueSize(): number {
     return this.offlineQueue ? this.offlineQueue.getQueueSize() : 0;
+  }
+
+  private log(message: string, data: unknown): void {
+    if (this.debug) this.logger(message, data);
   }
 }

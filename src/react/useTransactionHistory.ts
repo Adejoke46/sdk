@@ -105,14 +105,6 @@ export function useTransactionHistory(
     };
   }, []);
 
-  const withAbort = <T>(fn: (signal: AbortSignal) => Promise<T>): Promise<T> => {
-    const controller = new AbortController();
-    abortControllersRef.current.add(controller);
-    return fn(controller.signal).finally(() => {
-      abortControllersRef.current.delete(controller);
-    });
-  };
-
   const safeSetState = useCallback(
     (fn: React.SetStateAction<UseTransactionHistoryState>) => {
       if (!isMountedRef.current) return;
@@ -162,6 +154,7 @@ export function useTransactionHistory(
           abortRef.current?.abort();
           const controller = new AbortController();
           abortRef.current = controller;
+          abortControllersRef.current.add(controller);
           const isStale = () => requestId !== requestIdRef.current;
 
           const current = stateRef.current;
@@ -180,12 +173,14 @@ export function useTransactionHistory(
               signal: controller.signal,
             });
           } catch (err) {
-            // A superseded request's failure (including its own abort) is
-            // not an error — silently keep current state.
-            if (isStale()) return stateRef.current.transactions;
+            // A superseded request's failure (including its own abort) while
+            // still mounted is not an error — silently keep current state.
+            if (isMountedRef.current && isStale()) return stateRef.current.transactions;
             throw err;
+          } finally {
+            abortControllersRef.current.delete(controller);
           }
-          if (isStale()) return stateRef.current.transactions;
+          if (isMountedRef.current && isStale()) return stateRef.current.transactions;
 
           if (!response.success || !response.data) {
             throw new Error(response.error?.message || 'Failed to fetch transaction history');

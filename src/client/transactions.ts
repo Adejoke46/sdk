@@ -9,6 +9,7 @@ import { Transaction, TransactionHistory } from '../types/models';
 import { normalizeTransaction, normalizeTransactionHistory } from '../utils/normalizers';
 import { DorisioClient } from '../client';
 import { RequestValidator } from '../utils/validators';
+import { RequestOptions } from '../http/http-client';
 
 export interface CreateTipRequest {
   creatorId: string;
@@ -99,7 +100,11 @@ export interface SubmitTransactionResponse {
  * console.log(tip.id);
  * ```
  */
-export async function createTip(this: DorisioClient, data: CreateTipRequest): Promise<Transaction> {
+export async function createTip(
+  this: DorisioClient,
+  data: CreateTipRequest,
+  options?: Partial<RequestOptions>
+): Promise<Transaction> {
   RequestValidator.required(data, 'tip data');
   RequestValidator.required(data.creatorId, 'Creator ID');
   RequestValidator.nonEmptyString(data.creatorId, 'creatorId');

@@ -33,10 +33,11 @@ function cursorClient(pages: number[][]) {
   const request = vi.fn(async (_method: string, path: string) => {
     const cursor = new URLSearchParams(path.split('?')[1] ?? '').get('cursor');
     const idx = cursor ? Number(cursor.slice(1)) : 0;
+    const pageItems = pages[idx] ?? [];
     return {
       success: true,
       data: {
-        transactions: pages[idx].map((id) => ({ id })),
+        transactions: pageItems.map((id) => ({ id })),
         nextCursor: idx + 1 < pages.length ? `c${idx + 1}` : undefined,
       },
     };
@@ -65,7 +66,7 @@ describe('listTips', () => {
   it('sends offset alongside our own cursors so offset backends work', async () => {
     const client = offsetClient(100);
     const res = await listTips(client, { limit: 20, cursor: 'eyJvZmZzZXQiOiAyMH0=' });
-    expect(client.request.mock.calls[0][1]).toContain('offset=20');
+    expect(String(client.request.mock.calls[0]?.[1])).toContain('offset=20');
     expect(res.items[0]).toEqual({ id: 21 });
     expect(decodeCursor(res.nextCursor as string)).toEqual({ offset: 40 });
     expect(decodeCursor(res.prevCursor as string)).toEqual({ offset: 0 });
@@ -91,8 +92,8 @@ describe('listTips', () => {
     const p1 = await listTips(client, { limit: 2 });
     expect(p1.nextCursor).toBe('c1');
     const p2 = await listTips(client, { limit: 2, cursor: p1.nextCursor });
-    expect(client.request.mock.calls[1][1]).toContain('cursor=c1');
-    expect(client.request.mock.calls[1][1]).not.toContain('offset');
+    expect(String(client.request.mock.calls[1]?.[1])).toContain('cursor=c1');
+    expect(String(client.request.mock.calls[1]?.[1])).not.toContain('offset');
     expect(ids(p2)).toEqual([3, 4]);
   });
 
@@ -109,7 +110,7 @@ describe('other list helpers', () => {
   it('listCreatorTips hits the creator path with paging', async () => {
     const client = offsetClient(15);
     const res = await listCreatorTips(client, 'a/b', { limit: 10 });
-    expect(client.request.mock.calls[0][1]).toBe('/api/v1/transactions/creator/a%2Fb?limit=10');
+    expect(client.request.mock.calls[0]?.[1]).toBe('/api/v1/transactions/creator/a%2Fb?limit=10');
     expect(res.hasMore).toBe(true);
   });
 
@@ -117,8 +118,8 @@ describe('other list helpers', () => {
     const client = offsetClient(3, 'creators');
     expect((await listCreators(client, { limit: 10 })).items).toHaveLength(3);
     await listVerifiedCreators(client, { limit: 10, filters: { x: 1 } });
-    expect(client.request.mock.calls[1][1]).toContain('filter%5Bverified%5D=true');
-    expect(client.request.mock.calls[1][1]).toContain('filter%5Bx%5D=1');
+    expect(String(client.request.mock.calls[1]?.[1])).toContain('filter%5Bverified%5D=true');
+    expect(String(client.request.mock.calls[1]?.[1])).toContain('filter%5Bx%5D=1');
   });
 });
 
