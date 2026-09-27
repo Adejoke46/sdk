@@ -457,15 +457,107 @@ await client.wallet.getBalance();
 
 ## Error Handling
 
-The SDK provides domain-specific error classes:
+The SDK provides domain-specific error classes with typed fields that let you write recovery logic without string-parsing error messages.
 
-- **DorisioError** - Base error class
-- **AuthError** - Authentication failures
-- **PaymentError** - Payment processing failures (includes transactionHash)
-- **WalletVerificationError** - Wallet linking issues (includes challenge)
-- **ValidationError** - Input validation errors (includes details)
-- **RateLimitError** - Rate limiting (includes retryAfter)
-- **TimeoutError** - Network timeouts
+See **[docs/ERROR_HANDLING.md](./docs/ERROR_HANDLING.md)** for the full guide, including retry patterns, circuit breaker, error logging setup, React hook usage, and sandbox testing for error paths.
+
+| Class | statusCode | code | Key fields |
+|---|---|---|---|
+| `DorisioError` | varies | varies | base class — `statusCode`, `code` |
+| `AuthError` | varies | varies | generic auth failure |
+| `AuthenticationError` | 401 | `UNAUTHORIZED` | — |
+| `AuthorizationError` | 403 | `FORBIDDEN` | — |
+| `ValidationError` | 400 | `VALIDATION_ERROR` | `details` (field-level errors) |
+| `PaymentError` | varies | varies | `transactionHash` |
+| `WalletVerificationError` | varies | varies | `challenge` |
+| `RateLimitError` | 429 | `RATE_LIMITED` | `retryAfter` (seconds) |
+| `TimeoutError` | 408 | `TIMEOUT` | — |
+| `NetworkError` | 0 | `NETWORK_ERROR` | — |
+| `NotFoundError` | 404 | `NOT_FOUND` | — |
+
+### Error recovery examples
+
+#### Catch and recover from common errors
+
+```typescript
+import {
+  AuthenticationError,
+  ValidationError,
+  RateLimitError,
+  TimeoutError,
+  NetworkError,
+  PaymentError,
+  DorisioError,
+} from 'dorisio-sdk';
+import { v4 as uuidv4 } from 'uuid';
+
+const idempotencyKey = uuidv4(); // generate once, reuse on retry
+
+try {
+  const tip = await client.payments.createTip({
+    creatorId: 'xxx',
+    amount: 50,
+    idempotencyKey,
+  });
+} catch (error) {
+  if (error instanceof ValidationError) {
+    // Input rejected — show field errors, don't retry
+    showFormErrors(error.details);
+
+  } else if (error instanceof AuthenticationError) {
+    // Session expired — redirect to login
+    client.clearToken();
+    redirectToLogin();
+
+  } else if (error instanceof RateLimitError) {
+    // Server-requested back-off — wait, then retry with same idempotencyKey
+    await sleep((error.retryAfter ?? 60) * 1000);
+    await client.payments.createTip({ creatorId: 'xxx', amount: 50, idempotencyKey });
+
+  } else if (error instanceof PaymentError && error.transactionHash) {
+    // Transaction may have reached Stellar — verify before retrying
+    const status = await client.payments.checkTransactionConfirmation(error.transactionHash);
+    if (status !== 'confirmed') {
+      // Safe to retry with same idempotencyKey
+      await client.payments.createTip({ creatorId: 'xxx', amount: 50, idempotencyKey });
+    }
+
+  } else if (error instanceof TimeoutError || error instanceof NetworkError) {
+    // Transient failure — same idempotencyKey prevents double-charging
+    await retryWithBackoff(() =>
+      client.payments.createTip({ creatorId: 'xxx', amount: 50, idempotencyKey })
+    );
+
+  } else if (!(error instanceof DorisioError)) {
+    // Unexpected non-SDK error — propagate
+    throw error;
+  }
+}
+```
+
+#### Exponential backoff helper
+
+```typescript
+async function retryWithBackoff<T>(
+  fn: () => Promise<T>,
+  maxAttempts = 3,
+  initialDelayMs = 500
+): Promise<T> {
+  let delay = initialDelayMs;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await fn();
+    } catch (error) {
+      if (attempt === maxAttempts) throw error;
+      await new Promise((resolve) => setTimeout(resolve, delay));
+      delay *= 2; // exponential backoff
+    }
+  }
+  throw new Error('Unreachable');
+}
+```
+
+Full guide: **[docs/ERROR_HANDLING.md](./docs/ERROR_HANDLING.md)**
 
 ## Browser Support
 
