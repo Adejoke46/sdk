@@ -36,7 +36,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "docs": "typedoc",
-    "docs:watch": "typedoc --watch"
+    "docs:watch": "typedoc --watch",
+    "storybook": "storybook build -o docs/storybook-static"
   },
   "dependencies": {
     "@stellar/stellar-sdk": "^12.0.0",
@@ -44,6 +45,14 @@
     "zod": "^3.23.8"
   },
   "devDependencies": {
+    "@storybook/addon-essentials": "^8.6.14",
+    "@storybook/addon-interactions": "^8.6.14",
+    "@storybook/addon-links": "^10.6.0",
+    "@storybook/blocks": "^8.6.14",
+    "@storybook/builder-vite": "^10.6.0",
+    "@storybook/react": "^10.6.0",
+    "@storybook/react-vite": "^10.6.0",
+    "@storybook/testing-library": "^0.2.1",
     "@testing-library/react": "^14.3.1",
     "@types/node": "^20.12.12",
     "@types/react": "^19.2.18",

@@ -1043,109 +1043,161 @@ interceptors.addErrorInterceptor((error, requestId) => {
   built-in `debug: true` option.
 
 Enable sanitised debug logging through the client config:
+# Error Handling and Recovery
+
+The Dorisio SDK provides custom error handlers and error recovery strategies to help you implement robust error handling in your application.
+
+## Custom Error Handlers
+
+You can register a custom error handler to implement custom error recovery logic such as retrying with custom delays, implementing fallback strategies, or circuit breaker patterns.
+
+### Basic Usage
 
 ```typescript
+import { DorisioClient } from 'dorisio-sdk';
+
 const client = new DorisioClient({
   baseUrl: 'https://api.dorisio.com',
-  token,
-  debug: true, // logs sanitised request/response info
-  logger: (message, data) => myLogger.debug(message, data),
-});
-```
-
----
-
-## React error handling
-
-React hooks (`useCreateTip`, `useWallet`, `useCreatorBalance`,
-`useTransactionHistory`) expose an `error` string in their state. They also
-propagate the original error to the caller so you can handle it in both
-places.
-
-```typescript
-import { useCreateTip } from 'dorisio-sdk/react';
-import { PaymentError, RateLimitError, ValidationError } from 'dorisio-sdk';
-
-function TipButton() {
-  const { createTip, loading, error } = useCreateTip();
-
-  async function handleTip() {
-    try {
-      await createTip({
-        creatorId: 'xxx',
-        amount: 50,
-        idempotencyKey: crypto.randomUUID(),
-      });
-    } catch (err) {
-      if (err instanceof ValidationError) {
-        showFormErrors(err.details);
-      } else if (err instanceof RateLimitError) {
-        showBanner(`Too many requests. Try again in ${err.retryAfter ?? 60}s.`);
-      } else if (err instanceof PaymentError) {
-        showBanner(`Payment failed: ${err.message}`);
-      }
-      // Don't re-throw — the hook already forwarded the error to the provider
+  token: 'your-token',
+  errorHandler: async (error, context) => {
+    if (error.statusCode === 429) {
+      // Custom rate limit handling
+      return { action: 'retry', delayMs: 5000 };
     }
+    if (error.statusCode && error.statusCode >= 500) {
+      // Custom server error handling
+      return { action: 'fallback', fallbackValue: { cached: true } };
+    }
+    return { action: 'throw' };
+  },
+});
+```
+
+### Error Handler Actions
+
+The error handler can return one of three actions:
+
+- **`{ action: 'retry', delayMs?: number }`** - Retry the request with an optional custom delay
+- **`{ action: 'fallback', fallbackValue: unknown }`** - Return a fallback value instead of throwing the error
+- **`{ action: 'throw' }`** - Throw the error as normal
+
+### Error Context
+
+The error handler receives context information about the request:
+
+```typescript
+interface ErrorHandlerContext {
+  method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+  path: string;
+  body?: unknown;
+  headers?: Record<string, string>;
+  attempt?: number;
+  requestId?: string;
+}
+```
+
+### Registering Error Handlers
+
+You can also register error handlers after creating the client:
+
+```typescript
+client.onError(async (error, context) => {
+  console.error('Error occurred:', error, context);
+  if (error.statusCode === 429) {
+    return { action: 'retry', delayMs: 1000 };
   }
-
-  return (
-    <button onClick={handleTip} disabled={loading}>
-      {loading ? 'Processing…' : 'Send Tip'}
-    </button>
-  );
-}
+  return { action: 'throw' };
+});
 ```
 
-For React Error Boundaries, note that hooks do not throw into the render
-tree — errors surface through the `error` state or the async handler's
-catch block. Use Error Boundaries for unexpected rendering errors, not for
-SDK errors.
+## Common Patterns
 
-Provider-level error state (the last error across all hooks):
+### Rate Limit Handling
 
 ```typescript
-import { useDorisio } from 'dorisio-sdk/react';
-
-function ErrorBanner() {
-  const { error } = useDorisio();
-  if (!error) return null;
-  return <p role="alert">{error.message}</p>;
-}
+const client = new DorisioClient({
+  baseUrl: 'https://api.dorisio.com',
+  errorHandler: async (error) => {
+    if (error.statusCode === 429) {
+      // Exponential backoff for rate limits
+      const delayMs = Math.pow(2, (context.attempt || 1)) * 1000;
+      return { action: 'retry', delayMs };
+    }
+    return { action: 'throw' };
+  },
+});
 ```
 
----
-
-## Sandbox testing for error paths
-
-Use the sandbox mode to reproduce error scenarios in tests without hitting
-the network:
+### Circuit Breaker Pattern
 
 ```typescript
-import { createSandboxClient } from 'dorisio-sdk';
-
-// Sandbox with a 20% random error rate for resilience testing
-const client = createSandboxClient({ seed: 42, errorRate: 0.2 });
-
-// Or force a specific error with a custom mock router (advanced)
-import { DorisioClient, PaymentError } from 'dorisio-sdk';
+let failureCount = 0;
+const FAILURE_THRESHOLD = 5;
+const RESET_TIMEOUT = 60000; // 1 minute
 
 const client = new DorisioClient({
   baseUrl: 'https://api.dorisio.com',
-  mode: 'sandbox',
+  errorHandler: async (error, context) => {
+    if (error.statusCode && error.statusCode >= 500) {
+      failureCount++;
+      if (failureCount >= FAILURE_THRESHOLD) {
+        // Circuit is open, return fallback
+        return { action: 'fallback', fallbackValue: { fromCache: true } };
+      }
+      return { action: 'retry', delayMs: 1000 };
+    }
+    // Reset on success
+    failureCount = 0;
+    return { action: 'throw' };
+  },
 });
-
-// Check what sandbox calls were made
-const history = client.getSandboxHistory();
-console.log(history);
 ```
 
-See [examples/sandbox/](../examples/sandbox/) for runnable sandbox examples.
+### Fallback Strategies
 
----
+```typescript
+const client = new DorisioClient({
+  baseUrl: 'https://api.dorisio.com',
+  errorHandler: async (error, context) => {
+    if (error.statusCode === 503) {
+      // Service unavailable, return cached data
+      return { action: 'fallback', fallbackValue: getCachedData(context.path) };
+    }
+    return { action: 'throw' };
+  },
+});
+```
 
-## See also
+## Async Error Handlers
 
-- [INTERCEPTORS.md](../INTERCEPTORS.md) — hook into the request lifecycle for logging, metrics, and auth refresh
-- [API Reference](https://dorisio.github.io/sdk/) — auto-generated TypeDoc docs for all classes and methods
-- [examples/vanilla/](../examples/vanilla/) — auth, wallet, and payment examples with error handling
-- [examples/react/](../examples/react/) — React component examples
+Error handlers support async operations:
+
+```typescript
+const client = new DorisioClient({
+  baseUrl: 'https://api.dorisio.com',
+  errorHandler: async (error, context) => {
+    // Perform async operations
+    await logErrorToService(error, context);
+    await sendAlert(error);
+
+    if (error.statusCode === 429) {
+      return { action: 'retry', delayMs: 5000 };
+    }
+    return { action: 'throw' };
+  },
+});
+```
+
+## Error Handler Failure
+
+If the error handler itself throws an error, the SDK will fall back to normal error handling and the original error will be thrown:
+
+```typescript
+const client = new DorisioClient({
+  baseUrl: 'https://api.dorisio.com',
+  errorHandler: async (error) => {
+    // If this throws, the original error will be thrown
+    throw new Error('Handler failed');
+  },
+});
+```

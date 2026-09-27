@@ -33,8 +33,8 @@ describe('InterceptorManager — registration and execution', () => {
 
   it('executes response interceptors in order', async () => {
     const manager = new InterceptorManager();
-    manager.addResponseInterceptor((r) => ({ ...(r as object), a: 1 }));
-    manager.addResponseInterceptor((r) => ({ ...(r as object), b: 2 }));
+    manager.addResponseInterceptor(<T>(r: T): T => ({ ...(r as object), a: 1 } as T));
+    manager.addResponseInterceptor(<T>(r: T): T => ({ ...(r as object), b: 2 } as T));
 
     const result = await manager.executeResponseInterceptors({});
     expect(result).toEqual({ a: 1, b: 2 });

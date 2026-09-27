@@ -18,13 +18,14 @@ import {
   type Framework,
   type InitOptions,
 } from './templates/index';
+import { runGenerateBackend } from './generate-backend';
 
 const FRAMEWORKS: Framework[] = ['react', 'next', 'vanilla'];
 const AUTH_MODES: AuthMode[] = ['jwt', 'session', 'custom'];
 const DATABASES: Database[] = ['none', 'postgres', 'sqlite'];
 
 export interface ParsedArgs {
-  command: 'init' | 'help';
+  command: 'init' | 'help' | 'generate-backend';
   framework?: Framework;
   auth?: AuthMode;
   database?: Database;
@@ -52,9 +53,11 @@ export function parseArgs(argv: string[]): ParsedArgs {
   const bin = path.basename(argv[1] || '');
   const yes = args.includes('--yes') || args.includes('-y');
 
-  let command: 'init' | 'help' = 'init';
+  let command: 'init' | 'help' | 'generate-backend' = 'init';
   if (args.includes('--help') || args.includes('-h') || args[0] === 'help') {
     command = 'help';
+  } else if (args[0] === 'generate-backend') {
+    command = 'generate-backend';
   } else if (args[0] === 'init' || bin === 'dorisio' || bin === 'create-dorisio-app' || args.length === 0) {
     command = 'init';
   } else if (args[0] && !args[0].startsWith('-')) {
@@ -85,12 +88,17 @@ export function parseArgs(argv: string[]): ParsedArgs {
 
 function printHelp(): void {
   console.log(`
-Dorisio CLI — scaffold Dorisio into the current project
+Dorisio CLI — scaffolding and code generation tool
 
 Usage:
   npx dorisio init [options]
+  npx dorisio generate-backend [options]
 
-Options:
+Commands:
+  init              Scaffold Dorisio client into a frontend project
+  generate-backend  Generate backend route handlers (Express, Next.js, Fastify)
+
+Options (init):
   --framework <react|next|vanilla>   Target framework
   --auth <jwt|session|custom>        Authentication mode
   --database <none|postgres|sqlite>  Database hint for .env
@@ -98,9 +106,15 @@ Options:
   --yes, -y                          Skip interactive prompts (use defaults/flags)
   -h, --help                         Show help
 
+Options (generate-backend):
+  --framework <express|nextjs|fastify>  Target backend framework (default: express)
+  --output <dir>                        Output directory (default: ./src/routes)
+  --language <typescript|javascript>    Target language (default: typescript)
+  --no-webhooks                         Omit webhook verification endpoint
+
 Examples:
   npx dorisio init
-  npx dorisio init --framework next --auth jwt --database none --yes
+  npx dorisio generate-backend --framework express --output ./src/routes
 `);
 }
 
@@ -214,6 +228,10 @@ export async function runInit(parsed: ParsedArgs): Promise<void> {
 
 async function main(): Promise<void> {
   const parsed = parseArgs(process.argv);
+  if (parsed.command === 'generate-backend') {
+    await runGenerateBackend(process.argv);
+    return;
+  }
   if (parsed.command === 'help') {
     printHelp();
     return;

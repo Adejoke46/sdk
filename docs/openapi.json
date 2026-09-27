@@ -1,0 +1,2476 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Dorisio API",
+    "version": "0.1.0",
+    "description": "OpenAPI 3.0 specification generated from Dorisio SDK type definitions, client methods, and Zod schemas.\n\nDorisio provides payment infrastructure for creator monetization and Stellar ledger settlements.",
+    "contact": {
+      "name": "Dorisio Developer Support",
+      "email": "support@dorisio.com",
+      "url": "https://docs.dorisio.dev"
+    },
+    "license": {
+      "name": "MIT",
+      "url": "https://opensource.org/licenses/MIT"
+    }
+  },
+  "servers": [
+    {
+      "url": "https://api.dorisio.com/api/v1",
+      "description": "Production Live API"
+    },
+    {
+      "url": "https://testnet-api.dorisio.com/api/v1",
+      "description": "Stellar Testnet Sandbox API"
+    }
+  ],
+  "tags": [
+    {
+      "name": "Creators",
+      "description": "Creator accounts, profiles, earnings, and verification"
+    },
+    {
+      "name": "Wallets",
+      "description": "Stellar wallet linking, challenge verification, and balance queries"
+    },
+    {
+      "name": "Transactions",
+      "description": "Payment tips, transaction building, status checks, and confirmation"
+    },
+    {
+      "name": "History",
+      "description": "Transaction history, analytics, and CSV exports"
+    },
+    {
+      "name": "Balance",
+      "description": "Account balances, payouts, and financial summaries"
+    },
+    {
+      "name": "Auth",
+      "description": "Authentication, session management, and JWT tokens"
+    },
+    {
+      "name": "Users",
+      "description": "User account management"
+    },
+    {
+      "name": "Webhooks",
+      "description": "Webhook events and HMAC-SHA256 signature verification"
+    },
+    {
+      "name": "Verification",
+      "description": "Cryptographic challenge and identity verification"
+    }
+  ],
+  "paths": {
+    "/creators": {
+      "get": {
+        "tags": [
+          "Creators"
+        ],
+        "summary": "List public creators",
+        "description": "Returns a paginated list of public creators on the platform.",
+        "operationId": "listCreators",
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 1
+            },
+            "description": "Page number"
+          },
+          {
+            "name": "pageSize",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 20
+            },
+            "description": "Items per page"
+          },
+          {
+            "name": "verified",
+            "in": "query",
+            "schema": {
+              "type": "boolean"
+            },
+            "description": "Filter by verification status"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of creators successfully retrieved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "creators": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Creator"
+                      }
+                    },
+                    "total": {
+                      "type": "integer"
+                    },
+                    "page": {
+                      "type": "integer"
+                    },
+                    "pageSize": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/creators/{creatorId}": {
+      "get": {
+        "tags": [
+          "Creators"
+        ],
+        "summary": "Get creator by ID",
+        "description": "Retrieves public details of a creator by their unique creator ID.",
+        "operationId": "getCreator",
+        "parameters": [
+          {
+            "name": "creatorId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Creator details",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Creator"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Creator not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/creators/{username}/profile": {
+      "get": {
+        "tags": [
+          "Creators"
+        ],
+        "summary": "Get creator profile by username",
+        "description": "Retrieves creator profile and engagement stats by public handle.",
+        "operationId": "getCreatorProfile",
+        "parameters": [
+          {
+            "name": "username",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Creator profile",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreatorProfile"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Creator not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/creators/{creatorId}/verify": {
+      "post": {
+        "tags": [
+          "Creators",
+          "Verification"
+        ],
+        "summary": "Verify creator status",
+        "description": "Sets the verified badge for a creator (admin/platform operation).",
+        "operationId": "verifyCreator",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "creatorId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "verified"
+                ],
+                "properties": {
+                  "verified": {
+                    "type": "boolean",
+                    "example": true
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated creator",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Creator"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/creators/{creatorId}/earnings": {
+      "get": {
+        "tags": [
+          "Creators",
+          "Balance"
+        ],
+        "summary": "Get creator earnings breakdown",
+        "description": "Retrieves total, pending, and confirmed balances for a creator.",
+        "operationId": "getCreatorEarnings",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "creatorId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Creator earnings breakdown",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreatorEarnings"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/creators/{creatorId}/payouts/pending": {
+      "get": {
+        "tags": [
+          "Creators",
+          "Balance"
+        ],
+        "summary": "Get creator pending payout",
+        "description": "Returns pending distribution amounts and next payout estimate.",
+        "operationId": "getCreatorPendingPayout",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "creatorId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Pending payout info",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PendingPayout"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/creators/{creatorId}/payouts/can-payout": {
+      "get": {
+        "tags": [
+          "Creators",
+          "Balance"
+        ],
+        "summary": "Check creator payout eligibility",
+        "description": "Checks if creator balance has reached the minimum payout threshold.",
+        "operationId": "canPayout",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "creatorId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Payout eligibility",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "boolean",
+                  "example": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/wallets": {
+      "post": {
+        "tags": [
+          "Wallets"
+        ],
+        "summary": "Connect Stellar wallet",
+        "description": "Registers a new Stellar wallet address with the authenticated user account.",
+        "operationId": "connectWallet",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateWalletRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Wallet connected",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Wallet"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid public key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/wallets/{walletId}": {
+      "get": {
+        "tags": [
+          "Wallets"
+        ],
+        "summary": "Get wallet by ID",
+        "description": "Retrieves connected wallet details.",
+        "operationId": "getWallet",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "walletId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Wallet found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Wallet"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Wallets"
+        ],
+        "summary": "Update wallet details",
+        "description": "Updates wallet friendly name or metadata.",
+        "operationId": "updateWallet",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "walletId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateWalletRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Wallet updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Wallet"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Wallets"
+        ],
+        "summary": "Disconnect wallet",
+        "description": "Unlinks a Stellar wallet from the user account.",
+        "operationId": "disconnectWallet",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "walletId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Wallet disconnected successfully"
+          }
+        }
+      }
+    },
+    "/wallets/{walletId}/balance": {
+      "get": {
+        "tags": [
+          "Wallets",
+          "Balance"
+        ],
+        "summary": "Get wallet balance",
+        "description": "Fetches on-chain and settled balance for a linked wallet.",
+        "operationId": "getWalletBalance",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "walletId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Balance details",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BalanceInfo"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/wallets/{walletId}/verify": {
+      "post": {
+        "tags": [
+          "Wallets",
+          "Verification"
+        ],
+        "summary": "Verify wallet signature",
+        "description": "Submits a cryptographic signature proving ownership of the wallet.",
+        "operationId": "verifyWallet",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "walletId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "proof"
+                ],
+                "properties": {
+                  "proof": {
+                    "type": "string",
+                    "description": "Cryptographic signature proof"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Wallet successfully verified",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Wallet"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/wallets/{walletId}/verify/challenge": {
+      "post": {
+        "tags": [
+          "Wallets",
+          "Verification"
+        ],
+        "summary": "Request wallet challenge",
+        "description": "Issues a time-limited challenge nonce for the wallet keypair to sign.",
+        "operationId": "requestWalletVerificationChallenge",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "walletId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Verification challenge",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Challenge"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/transactions/tip": {
+      "post": {
+        "tags": [
+          "Transactions"
+        ],
+        "summary": "Create a tip transaction",
+        "description": "Initiates a tip payment to a creator. Supports idempotency keys for safe retries.",
+        "operationId": "createTip",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Optional UUID idempotency key to prevent double charging on retries"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateTipRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Tip created successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Transaction"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation failed or duplicate non-idempotent request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/transactions/history": {
+      "get": {
+        "tags": [
+          "Transactions",
+          "History"
+        ],
+        "summary": "Get transaction history",
+        "description": "Fetches paginated transaction history for the authenticated user or creator.",
+        "operationId": "getTransactionHistory",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 1
+            }
+          },
+          {
+            "name": "pageSize",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 20
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "pending",
+                "confirmed",
+                "failed"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Transaction history",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TransactionHistory"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/transactions/stats": {
+      "get": {
+        "tags": [
+          "Transactions",
+          "History"
+        ],
+        "summary": "Get transaction statistics",
+        "description": "Calculates transaction success rates, volume, and count metrics.",
+        "operationId": "getTransactionStats",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "userId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Transaction stats",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TransactionStats"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/transactions/export": {
+      "get": {
+        "tags": [
+          "Transactions",
+          "History"
+        ],
+        "summary": "Export transaction history",
+        "description": "Exports transaction history as a downloadable CSV or JSON document.",
+        "operationId": "exportTransactionHistory",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "format",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "csv",
+                "json"
+              ],
+              "default": "csv"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Exported file content",
+            "content": {
+              "text/csv": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/transactions/{tipId}/build": {
+      "post": {
+        "tags": [
+          "Transactions"
+        ],
+        "summary": "Build Stellar payment transaction",
+        "description": "Constructs unsigned Stellar payment XDR transaction envelope for a tip.",
+        "operationId": "buildPaymentTransaction",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "tipId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BuildTransactionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Built transaction envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BuildTransactionResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/transactions/{tipId}/submit": {
+      "post": {
+        "tags": [
+          "Transactions"
+        ],
+        "summary": "Submit signed payment transaction",
+        "description": "Submits signed Stellar transaction to Horizon / Soroban RPC.",
+        "operationId": "submitPaymentTransaction",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "tipId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SubmitTransactionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Submitted transaction response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubmitTransactionResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/transactions/{tipId}/confirm": {
+      "get": {
+        "tags": [
+          "Transactions"
+        ],
+        "summary": "Check transaction confirmation",
+        "description": "Checks whether a tip payment has settled and confirmed on the ledger.",
+        "operationId": "checkTransactionConfirmation",
+        "parameters": [
+          {
+            "name": "tipId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Transaction confirmation status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Transaction"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/transactions/{tipId}/status": {
+      "patch": {
+        "tags": [
+          "Transactions"
+        ],
+        "summary": "Update tip status",
+        "description": "Manually transitions tip status.",
+        "operationId": "updateTipStatus",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "tipId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "status"
+                ],
+                "properties": {
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "pending",
+                      "completed",
+                      "failed",
+                      "cancelled"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated transaction",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Transaction"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/transactions/{transactionId}": {
+      "get": {
+        "tags": [
+          "Transactions"
+        ],
+        "summary": "Get tip status by ID",
+        "description": "Fetches details of an individual transaction.",
+        "operationId": "getTipStatus",
+        "parameters": [
+          {
+            "name": "transactionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Transaction details",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Transaction"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/users/me": {
+      "get": {
+        "tags": [
+          "Users",
+          "Auth"
+        ],
+        "summary": "Get current user profile",
+        "description": "Returns profile details for the authenticated user.",
+        "operationId": "getCurrentUser",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "User profile",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/User"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/users/me/summary": {
+      "get": {
+        "tags": [
+          "Users",
+          "Balance"
+        ],
+        "summary": "Get account summary",
+        "description": "Returns combined profile, wallet, and balance summary for current user.",
+        "operationId": "getAccountSummary",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Account summary",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountSummary"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/users/{userId}/balance": {
+      "get": {
+        "tags": [
+          "Users",
+          "Balance"
+        ],
+        "summary": "Get user balance",
+        "description": "Fetches aggregated balance for a given user ID.",
+        "operationId": "getBalance",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "userId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Account balance",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountBalance"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/users/{userId}/wallets": {
+      "get": {
+        "tags": [
+          "Wallets",
+          "Users"
+        ],
+        "summary": "List user wallets",
+        "description": "Returns all linked Stellar wallets for a user.",
+        "operationId": "getWallets",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "userId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of linked wallets",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Wallet"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/login": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "User login",
+        "description": "Authenticates with email and password, returning a JWT token.",
+        "operationId": "login",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "email",
+                  "password"
+                ],
+                "properties": {
+                  "email": {
+                    "type": "string",
+                    "format": "email",
+                    "example": "user@example.com"
+                  },
+                  "password": {
+                    "type": "string",
+                    "format": "password",
+                    "example": "P@ssword123"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Authenticated session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionInfo"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/register": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "User registration",
+        "description": "Registers a new account and returns initial authenticated session.",
+        "operationId": "register",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "email",
+                  "password",
+                  "name"
+                ],
+                "properties": {
+                  "email": {
+                    "type": "string",
+                    "format": "email",
+                    "example": "newuser@example.com"
+                  },
+                  "password": {
+                    "type": "string",
+                    "format": "password",
+                    "example": "P@ssword123"
+                  },
+                  "name": {
+                    "type": "string",
+                    "example": "Jane Doe"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Registration successful",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionInfo"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/refresh": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Refresh session token",
+        "description": "Renews an active session token before expiration.",
+        "operationId": "refreshSession",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Refreshed session token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionInfo"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/validate": {
+      "get": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Validate session",
+        "description": "Validates current bearer token and returns authenticated user.",
+        "operationId": "validateSession",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Valid session user",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/User"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Expired or invalid token"
+          }
+        }
+      }
+    },
+    "/auth/logout": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Logout",
+        "description": "Invalidates the current session token.",
+        "operationId": "logout",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Logged out successfully"
+          }
+        }
+      }
+    },
+    "/auth/expiry": {
+      "get": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Check session expiry",
+        "description": "Returns time remaining before current token expires.",
+        "operationId": "getSessionExpiry",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Expiry details",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "expiresAt",
+                    "expiresIn",
+                    "isExpired"
+                  ],
+                  "properties": {
+                    "expiresAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "expiresIn": {
+                      "type": "integer"
+                    },
+                    "isExpired": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/webhooks": {
+      "post": {
+        "tags": [
+          "Webhooks"
+        ],
+        "summary": "Dorisio incoming webhook event",
+        "description": "Webhook endpoint invoked by Dorisio on payment confirmation, payout events, and wallet links.",
+        "operationId": "handleWebhook",
+        "parameters": [
+          {
+            "name": "X-Dorisio-Signature",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "HMAC-SHA256 signature of request payload for verification"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "event",
+                  "data",
+                  "timestamp"
+                ],
+                "properties": {
+                  "event": {
+                    "type": "string",
+                    "example": "payment.completed"
+                  },
+                  "data": {
+                    "type": "object"
+                  },
+                  "timestamp": {
+                    "type": "string",
+                    "format": "date-time"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Webhook processed"
+          },
+          "401": {
+            "description": "Invalid signature"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "BearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "Enter your Dorisio JWT authentication token in the Authorization header."
+      }
+    },
+    "schemas": {
+      "ApiError": {
+        "type": "object",
+        "description": "Standard error response structure returned on failed requests",
+        "required": [
+          "error",
+          "statusCode"
+        ],
+        "properties": {
+          "error": {
+            "type": "string",
+            "description": "Human-readable error description",
+            "example": "Resource not found"
+          },
+          "statusCode": {
+            "type": "integer",
+            "description": "HTTP status code",
+            "example": 404
+          },
+          "code": {
+            "type": "string",
+            "description": "Application error code",
+            "example": "NOT_FOUND"
+          },
+          "details": {
+            "type": "object",
+            "description": "Additional structured error context"
+          },
+          "transactionHash": {
+            "type": "string",
+            "description": "Stellar transaction hash if applicable"
+          }
+        }
+      },
+      "User": {
+        "type": "object",
+        "description": "Dorisio user account",
+        "required": [
+          "id",
+          "email",
+          "name",
+          "role",
+          "createdAt",
+          "verified"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Unique user identifier (UUID)",
+            "example": "usr_98a7bc6d"
+          },
+          "email": {
+            "type": "string",
+            "format": "email",
+            "description": "User primary email address",
+            "example": "creator@example.com"
+          },
+          "name": {
+            "type": "string",
+            "description": "Display name",
+            "example": "Alice Creator"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "fan",
+              "creator",
+              "admin"
+            ],
+            "description": "Account role",
+            "example": "creator"
+          },
+          "avatar": {
+            "type": "string",
+            "nullable": true,
+            "description": "Avatar image URL",
+            "example": "https://cdn.dorisio.com/avatars/alice.jpg"
+          },
+          "verified": {
+            "type": "boolean",
+            "description": "Whether the user account is verified",
+            "example": true
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Account creation timestamp",
+            "example": "2024-01-15T08:30:00Z"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Account modification timestamp",
+            "example": "2024-02-01T12:00:00Z"
+          }
+        }
+      },
+      "UpdateUserRequest": {
+        "type": "object",
+        "description": "Payload for updating user profile details",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "New display name",
+            "example": "Alice Bob"
+          },
+          "avatar": {
+            "type": "string",
+            "format": "uri",
+            "description": "Avatar image URL"
+          }
+        }
+      },
+      "Wallet": {
+        "type": "object",
+        "description": "Linked Stellar wallet account",
+        "required": [
+          "id",
+          "userId",
+          "publicKey",
+          "verified",
+          "createdAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Wallet entry ID",
+            "example": "wal_12345"
+          },
+          "userId": {
+            "type": "string",
+            "description": "Owner user ID",
+            "example": "usr_98a7bc6d"
+          },
+          "publicKey": {
+            "type": "string",
+            "description": "Stellar public key (G...)",
+            "example": "GA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVWGS"
+          },
+          "name": {
+            "type": "string",
+            "nullable": true,
+            "description": "Friendly wallet label",
+            "example": "Primary Stellar Wallet"
+          },
+          "verified": {
+            "type": "boolean",
+            "description": "Whether ownership has been verified by cryptographic signature",
+            "example": true
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Wallet creation timestamp"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Wallet update timestamp"
+          }
+        }
+      },
+      "CreateWalletRequest": {
+        "type": "object",
+        "description": "Payload for connecting a new Stellar wallet",
+        "required": [
+          "publicKey"
+        ],
+        "properties": {
+          "publicKey": {
+            "type": "string",
+            "description": "Stellar G... public key",
+            "example": "GA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVWGS"
+          },
+          "name": {
+            "type": "string",
+            "description": "Friendly wallet label",
+            "example": "Savings Wallet"
+          }
+        }
+      },
+      "UpdateWalletRequest": {
+        "type": "object",
+        "description": "Payload for modifying wallet metadata",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Updated wallet label",
+            "example": "Tips Wallet"
+          }
+        }
+      },
+      "BalanceInfo": {
+        "type": "object",
+        "description": "Wallet balance metrics",
+        "required": [
+          "walletId",
+          "available",
+          "pending",
+          "currency"
+        ],
+        "properties": {
+          "walletId": {
+            "type": "string",
+            "description": "Wallet ID"
+          },
+          "available": {
+            "type": "number",
+            "description": "Available withdrawable balance",
+            "example": 125.5
+          },
+          "pending": {
+            "type": "number",
+            "description": "Pending in-flight balance",
+            "example": 10
+          },
+          "currency": {
+            "type": "string",
+            "description": "Asset currency code",
+            "example": "USDC"
+          }
+        }
+      },
+      "AccountBalance": {
+        "type": "object",
+        "description": "Aggregated user account balance across all linked wallets",
+        "required": [
+          "total",
+          "available",
+          "pending",
+          "wallets"
+        ],
+        "properties": {
+          "total": {
+            "type": "number",
+            "description": "Total combined balance (available + pending)",
+            "example": 250
+          },
+          "available": {
+            "type": "number",
+            "description": "Available balance across all wallets",
+            "example": 240
+          },
+          "pending": {
+            "type": "number",
+            "description": "Pending unconfirmed funds",
+            "example": 10
+          },
+          "wallets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BalanceInfo"
+            }
+          }
+        }
+      },
+      "AccountSummary": {
+        "type": "object",
+        "description": "Comprehensive user account overview and metrics",
+        "required": [
+          "userId",
+          "email",
+          "role",
+          "balance"
+        ],
+        "properties": {
+          "userId": {
+            "type": "string",
+            "description": "User ID"
+          },
+          "email": {
+            "type": "string",
+            "format": "email",
+            "description": "User email"
+          },
+          "role": {
+            "type": "string",
+            "description": "User role"
+          },
+          "balance": {
+            "$ref": "#/components/schemas/AccountBalance"
+          },
+          "totalTipsSent": {
+            "type": "number",
+            "description": "Total tips sent in account lifetime",
+            "example": 45
+          },
+          "totalEarnings": {
+            "type": "number",
+            "description": "Total creator earnings in USD",
+            "example": 1250
+          },
+          "lastActivityDate": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Timestamp of last activity"
+          }
+        }
+      },
+      "Creator": {
+        "type": "object",
+        "description": "Creator profile on Dorisio platform",
+        "required": [
+          "id",
+          "userId",
+          "username",
+          "verified",
+          "isPublic",
+          "totalEarnings",
+          "pendingBalance",
+          "createdAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Unique creator identifier",
+            "example": "crt_550e8400"
+          },
+          "userId": {
+            "type": "string",
+            "description": "Linked user account ID",
+            "example": "usr_98a7bc6d"
+          },
+          "username": {
+            "type": "string",
+            "description": "Unique creator handle",
+            "example": "alice_creates"
+          },
+          "displayName": {
+            "type": "string",
+            "nullable": true,
+            "description": "Display name",
+            "example": "Alice In Tech"
+          },
+          "bio": {
+            "type": "string",
+            "nullable": true,
+            "description": "Biography / description",
+            "example": "Building open source developer tools"
+          },
+          "avatar": {
+            "type": "string",
+            "nullable": true,
+            "description": "Avatar URL"
+          },
+          "verified": {
+            "type": "boolean",
+            "description": "Verification badge status",
+            "example": true
+          },
+          "isPublic": {
+            "type": "boolean",
+            "description": "Whether the profile is publicly visible",
+            "example": true
+          },
+          "totalEarnings": {
+            "type": "number",
+            "description": "Total creator lifetime earnings in USD",
+            "example": 5400
+          },
+          "pendingBalance": {
+            "type": "number",
+            "description": "Unsettled creator earnings in USD",
+            "example": 250
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Creation timestamp"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Update timestamp"
+          }
+        }
+      },
+      "CreatorProfile": {
+        "type": "object",
+        "description": "Creator profile with engagement stats",
+        "required": [
+          "id",
+          "userId",
+          "username",
+          "verified",
+          "isPublic",
+          "totalEarnings",
+          "pendingBalance",
+          "createdAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Unique creator identifier"
+          },
+          "userId": {
+            "type": "string",
+            "description": "Linked user account ID"
+          },
+          "username": {
+            "type": "string",
+            "description": "Unique creator handle"
+          },
+          "displayName": {
+            "type": "string",
+            "nullable": true,
+            "description": "Display name"
+          },
+          "bio": {
+            "type": "string",
+            "nullable": true,
+            "description": "Biography"
+          },
+          "avatar": {
+            "type": "string",
+            "nullable": true,
+            "description": "Avatar URL"
+          },
+          "verified": {
+            "type": "boolean",
+            "description": "Verification badge status"
+          },
+          "isPublic": {
+            "type": "boolean",
+            "description": "Profile visibility"
+          },
+          "totalEarnings": {
+            "type": "number",
+            "description": "Lifetime earnings"
+          },
+          "pendingBalance": {
+            "type": "number",
+            "description": "Pending balance"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "stats": {
+            "type": "object",
+            "description": "Tip and engagement statistics",
+            "properties": {
+              "totalTips": {
+                "type": "number",
+                "description": "Total count of tips received",
+                "example": 120
+              },
+              "averageTip": {
+                "type": "number",
+                "description": "Average tip amount in USD",
+                "example": 15.5
+              },
+              "lastTipDate": {
+                "type": "string",
+                "format": "date-time",
+                "nullable": true,
+                "description": "Date of most recent tip received"
+              }
+            }
+          }
+        }
+      },
+      "CreateCreatorRequest": {
+        "type": "object",
+        "description": "Payload for registering as a creator",
+        "required": [
+          "username"
+        ],
+        "properties": {
+          "username": {
+            "type": "string",
+            "description": "Desired handle",
+            "example": "alice_creates"
+          },
+          "displayName": {
+            "type": "string",
+            "description": "Display name",
+            "example": "Alice Creates"
+          },
+          "bio": {
+            "type": "string",
+            "description": "Bio description",
+            "example": "Tech educator and builder"
+          }
+        }
+      },
+      "UpdateCreatorRequest": {
+        "type": "object",
+        "description": "Payload for updating creator profile details",
+        "properties": {
+          "displayName": {
+            "type": "string",
+            "description": "Updated display name"
+          },
+          "bio": {
+            "type": "string",
+            "description": "Updated biography"
+          },
+          "avatar": {
+            "type": "string",
+            "format": "uri",
+            "description": "Avatar image URL"
+          },
+          "isPublic": {
+            "type": "boolean",
+            "description": "Visibility toggle"
+          }
+        }
+      },
+      "CreatorEarnings": {
+        "type": "object",
+        "description": "Detailed earnings breakdown for a creator",
+        "required": [
+          "totalEarnings",
+          "pendingBalance",
+          "confirmedBalance",
+          "transactionCount"
+        ],
+        "properties": {
+          "totalEarnings": {
+            "type": "number",
+            "description": "Total gross earnings in USD",
+            "example": 1250
+          },
+          "pendingBalance": {
+            "type": "number",
+            "description": "Pending clearance funds in USD",
+            "example": 75
+          },
+          "confirmedBalance": {
+            "type": "number",
+            "description": "Cleared funds ready for payout in USD",
+            "example": 1175
+          },
+          "transactionCount": {
+            "type": "integer",
+            "description": "Total transactions included",
+            "example": 84
+          }
+        }
+      },
+      "PendingPayout": {
+        "type": "object",
+        "description": "Pending payout summary for creator",
+        "required": [
+          "pending",
+          "minimumThreshold"
+        ],
+        "properties": {
+          "pending": {
+            "type": "number",
+            "description": "Pending payout amount",
+            "example": 45
+          },
+          "nextPayoutDate": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Estimated next payout batch date"
+          },
+          "minimumThreshold": {
+            "type": "number",
+            "description": "Minimum balance required for automatic distribution",
+            "example": 10
+          }
+        }
+      },
+      "Transaction": {
+        "type": "object",
+        "description": "Payment transaction record",
+        "required": [
+          "id",
+          "fromUserId",
+          "creatorId",
+          "amount",
+          "status",
+          "createdAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Transaction UUID",
+            "example": "tx_3fa85f64"
+          },
+          "fromUserId": {
+            "type": "string",
+            "description": "Sender user ID",
+            "example": "usr_fan123"
+          },
+          "creatorId": {
+            "type": "string",
+            "description": "Recipient creator ID",
+            "example": "crt_550e8400"
+          },
+          "amount": {
+            "type": "number",
+            "description": "Payment amount in specified asset/currency",
+            "example": 25
+          },
+          "currency": {
+            "type": "string",
+            "enum": [
+              "USD",
+              "EUR",
+              "XLM"
+            ],
+            "description": "Currency code",
+            "example": "USD"
+          },
+          "message": {
+            "type": "string",
+            "nullable": true,
+            "description": "Optional patron message",
+            "example": "Keep up the great work!"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "completed",
+              "confirmed",
+              "failed",
+              "cancelled"
+            ],
+            "description": "Transaction status",
+            "example": "confirmed"
+          },
+          "stellarTxHash": {
+            "type": "string",
+            "nullable": true,
+            "description": "Stellar ledger transaction hash",
+            "example": "0x3a4f89..."
+          },
+          "transactionHash": {
+            "type": "string",
+            "nullable": true,
+            "description": "Transaction hash alias"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Submission timestamp"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Last update timestamp"
+          }
+        }
+      },
+      "CreateTipRequest": {
+        "type": "object",
+        "description": "Payload for initiating a creator tip payment",
+        "required": [
+          "creatorId",
+          "amount"
+        ],
+        "properties": {
+          "creatorId": {
+            "type": "string",
+            "description": "Target creator ID",
+            "example": "crt_550e8400"
+          },
+          "amount": {
+            "type": "number",
+            "minimum": 0.01,
+            "description": "Tip amount",
+            "example": 10
+          },
+          "currency": {
+            "type": "string",
+            "enum": [
+              "USD",
+              "EUR",
+              "XLM"
+            ],
+            "default": "USD",
+            "description": "Currency asset"
+          },
+          "message": {
+            "type": "string",
+            "description": "Optional message to creator (max 500 chars)",
+            "example": "Awesome stream today!"
+          },
+          "idempotencyKey": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Idempotency key to safely retry requests without double charges",
+            "example": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d"
+          }
+        }
+      },
+      "BuildTransactionRequest": {
+        "type": "object",
+        "description": "Stellar transaction build parameters",
+        "required": [
+          "senderAddress",
+          "recipientAddress",
+          "amount"
+        ],
+        "properties": {
+          "senderAddress": {
+            "type": "string",
+            "description": "Sender Stellar public key (G...)",
+            "example": "GA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVWGS"
+          },
+          "recipientAddress": {
+            "type": "string",
+            "description": "Recipient Stellar public key (G...)",
+            "example": "GBZ4Z7O34J4YF2V3H74K2J5C2QO7P4C9L6N1B2V3C4X5Z6A7S8D9F0G1"
+          },
+          "amount": {
+            "type": "string",
+            "description": "Amount formatted as string for precision",
+            "example": "25.0000000"
+          },
+          "assetCode": {
+            "type": "string",
+            "default": "XLM",
+            "description": "Asset code"
+          },
+          "assetIssuer": {
+            "type": "string",
+            "description": "Issuer account ID for non-native assets"
+          }
+        }
+      },
+      "BuildTransactionResponse": {
+        "type": "object",
+        "description": "Built Stellar transaction envelope ready for signing",
+        "required": [
+          "xdr",
+          "networkPassphrase"
+        ],
+        "properties": {
+          "xdr": {
+            "type": "string",
+            "description": "Base64 encoded Stellar TransactionEnvelope XDR"
+          },
+          "networkPassphrase": {
+            "type": "string",
+            "description": "Network passphrase (Test SDF Network or Public Global Stellar Network)"
+          }
+        }
+      },
+      "SubmitTransactionRequest": {
+        "type": "object",
+        "description": "Payload for submitting signed transaction to Stellar network",
+        "required": [
+          "signedXdr"
+        ],
+        "properties": {
+          "signedXdr": {
+            "type": "string",
+            "description": "Base64 encoded signed TransactionEnvelope XDR"
+          }
+        }
+      },
+      "SubmitTransactionResponse": {
+        "type": "object",
+        "description": "Result of Stellar transaction submission",
+        "required": [
+          "transactionHash",
+          "status"
+        ],
+        "properties": {
+          "transactionHash": {
+            "type": "string",
+            "description": "Stellar ledger transaction hash",
+            "example": "0x4f89e2..."
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "confirmed",
+              "failed"
+            ],
+            "description": "Submission status"
+          },
+          "ledger": {
+            "type": "integer",
+            "description": "Ledger sequence number"
+          }
+        }
+      },
+      "TransactionHistory": {
+        "type": "object",
+        "description": "Paginated transaction history list",
+        "required": [
+          "transactions"
+        ],
+        "properties": {
+          "transactions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Transaction"
+            }
+          },
+          "total": {
+            "type": "integer",
+            "description": "Total matching records"
+          },
+          "page": {
+            "type": "integer",
+            "description": "Current page number"
+          },
+          "pageSize": {
+            "type": "integer",
+            "description": "Number of records per page"
+          }
+        }
+      },
+      "TransactionStats": {
+        "type": "object",
+        "description": "Statistical analytics of transaction performance",
+        "required": [
+          "totalCount",
+          "totalAmount"
+        ],
+        "properties": {
+          "totalCount": {
+            "type": "integer",
+            "description": "Total count of transactions"
+          },
+          "totalAmount": {
+            "type": "number",
+            "description": "Aggregate sum of transactions"
+          },
+          "successRate": {
+            "type": "number",
+            "description": "Success rate ratio (0 to 1)"
+          },
+          "averageAmount": {
+            "type": "number",
+            "description": "Average transaction amount"
+          },
+          "lastTransactionDate": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          }
+        }
+      },
+      "SessionInfo": {
+        "type": "object",
+        "description": "Authenticated session information and JWT token",
+        "required": [
+          "userId",
+          "email",
+          "token",
+          "expiresAt"
+        ],
+        "properties": {
+          "userId": {
+            "type": "string",
+            "description": "User account identifier"
+          },
+          "email": {
+            "type": "string",
+            "format": "email",
+            "description": "Account email"
+          },
+          "token": {
+            "type": "string",
+            "description": "Bearer JWT authentication token"
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Token expiration timestamp"
+          },
+          "expiresIn": {
+            "type": "integer",
+            "description": "Token lifetime in seconds",
+            "example": 86400
+          }
+        }
+      },
+      "VerificationStatus": {
+        "type": "object",
+        "description": "Entity verification state",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "unverified",
+              "pending",
+              "verified",
+              "rejected"
+            ]
+          },
+          "verified": {
+            "type": "boolean",
+            "description": "Whether verification is approved"
+          },
+          "verifiedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          }
+        }
+      },
+      "Challenge": {
+        "type": "object",
+        "description": "Cryptographic challenge for wallet signature verification",
+        "required": [
+          "challenge",
+          "expiresIn"
+        ],
+        "properties": {
+          "challenge": {
+            "type": "string",
+            "description": "Random challenge string to sign with Stellar secret key"
+          },
+          "expiresIn": {
+            "type": "integer",
+            "description": "Challenge validity window in seconds",
+            "example": 300
+          }
+        }
+      }
+    }
+  }
+}

@@ -90,6 +90,37 @@ export function useTransactionHistory(
   const [creatorId, setCreatorId] = useState<string | undefined>();
   const [lastOptions, setLastOptions] = useState(initialOptions);
 
+  const isMountedRef = useRef(true);
+  const abortControllersRef = useRef<Set<AbortController>>(new Set());
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    const controllers = abortControllersRef.current;
+    return () => {
+      isMountedRef.current = false;
+      for (const controller of controllers) {
+        controller.abort();
+      }
+      controllers.clear();
+    };
+  }, []);
+
+  const withAbort = <T>(fn: (signal: AbortSignal) => Promise<T>): Promise<T> => {
+    const controller = new AbortController();
+    abortControllersRef.current.add(controller);
+    return fn(controller.signal).finally(() => {
+      abortControllersRef.current.delete(controller);
+    });
+  };
+
+  const safeSetState = useCallback(
+    (fn: React.SetStateAction<UseTransactionHistoryState>) => {
+      if (!isMountedRef.current) return;
+      setState(fn);
+    },
+    []
+  );
+
   // Refs hold latest mutable values so callbacks stay stable and never go stale.
   const stateRef = useRef(state);
   stateRef.current = state;
@@ -119,40 +150,41 @@ export function useTransactionHistory(
         {
           code: 'FETCH_HISTORY_ERROR',
           fallbackMessage: 'Failed to fetch history',
-          onStart: () => setState((s) => ({ ...s, loading: true, error: undefined })),
-          onError: (error) => setState((s) => ({ ...s, error, loading: false })),
+          onStart: () => safeSetState((s) => ({ ...s, loading: true, error: undefined })),
+          onError: (error) => safeSetState((s) => ({ ...s, error, loading: false })),
+          isMounted: () => isMountedRef.current,
         },
-        async () => {
-          // Claim this fetch's generation up front and cancel whatever is
-          // still in flight — its response (or abort error) is stale by
-          // definition and must never touch state.
-          const requestId = ++requestIdRef.current;
-          abortRef.current?.abort();
-          const controller = new AbortController();
-          abortRef.current = controller;
-          const isStale = () => requestId !== requestIdRef.current;
+        () =>
+          withAbort(async (signal) => {
+            // Claim this fetch's generation up front and cancel whatever is
+            // still in flight — its response (or abort error) is stale by
+            // definition and must never touch state.
+            const requestId = ++requestIdRef.current;
+            abortRef.current?.abort();
+            const currentController = Array.from(abortControllersRef.current).pop();
+            abortRef.current = currentController ?? null;
+            const isStale = () => requestId !== requestIdRef.current;
 
-          const current = stateRef.current;
-          const page = options?.page ?? current.page;
-          const pageSize = options?.pageSize ?? current.pageSize;
-          // Explicit `undefined` clears creator filter; omit to keep last creatorId.
-          const resolvedCreator = creator !== undefined ? creator : creatorIdRef.current;
-          const endpoint = resolvedCreator
-            ? `/api/v1/transactions/creator/${resolvedCreator}`
-            : '/api/v1/transactions/history';
-          const query = `?page=${page}&pageSize=${pageSize}`;
+            const current = stateRef.current;
+            const page = options?.page ?? current.page;
+            const pageSize = options?.pageSize ?? current.pageSize;
+            // Explicit `undefined` clears creator filter; omit to keep last creatorId.
+            const resolvedCreator = creator !== undefined ? creator : creatorIdRef.current;
+            const endpoint = resolvedCreator
+              ? `/api/v1/transactions/creator/${resolvedCreator}`
+              : '/api/v1/transactions/history';
+            const query = `?page=${page}&pageSize=${pageSize}`;
 
-          let response;
-          try {
-            response = await client.request('GET', `${endpoint}${query}`, undefined, {
-              signal: controller.signal,
-            });
-          } catch (err) {
-            // A superseded request's failure (including its own abort) is
-            // not an error — silently keep current state.
-            if (isStale()) return stateRef.current.transactions;
-            throw err;
-          }
+            let response;
+            try {
+              response = await client.request('GET', `${endpoint}${query}`, undefined, {
+                signal,
+              });
+            } catch (err) {
+              if (!isMountedRef.current) throw err;
+              if (isStale()) return stateRef.current.transactions;
+              throw err;
+            }
           if (isStale()) return stateRef.current.transactions;
 
           if (!response.success || !response.data) {
@@ -184,9 +216,9 @@ export function useTransactionHistory(
           creatorIdRef.current = resolvedCreator;
 
           return transactions;
-        }
+        })
       ),
-    [client, setError, setIsLoading]
+    [client, setError, setIsLoading, safeSetState]
   );
 
   const goToPage = useCallback(
@@ -249,13 +281,15 @@ export function useTransactionHistory(
       pageSize: 10,
       loading: false,
     };
-    setState(initial);
+    safeSetState(initial);
     stateRef.current = initial;
-    setCreatorId(undefined);
+    if (isMountedRef.current) {
+      setCreatorId(undefined);
+      setLastOptions(undefined);
+    }
     creatorIdRef.current = undefined;
-    setLastOptions(undefined);
     lastOptionsRef.current = undefined;
-  }, []);
+  }, [safeSetState]);
 
   // Auto-fetch on mount
   useEffect(() => {

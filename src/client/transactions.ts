@@ -9,6 +9,7 @@ import { Transaction, TransactionHistory } from '../types/models';
 import { normalizeTransaction, normalizeTransactionHistory } from '../utils/normalizers';
 import { DorisioClient } from '../client';
 import { RequestValidator } from '../utils/validators';
+import type { RequestOptions } from '../http/http-client';
 
 export interface CreateTipRequest {
   creatorId: string;
@@ -99,7 +100,11 @@ export interface SubmitTransactionResponse {
  * console.log(tip.id);
  * ```
  */
-export async function createTip(this: DorisioClient, data: CreateTipRequest): Promise<Transaction> {
+export async function createTip(
+  this: DorisioClient,
+  data: CreateTipRequest,
+  options?: Partial<RequestOptions>
+): Promise<Transaction> {
   RequestValidator.required(data, 'tip data');
   RequestValidator.required(data.creatorId, 'Creator ID');
   RequestValidator.nonEmptyString(data.creatorId, 'creatorId');
@@ -122,7 +127,7 @@ export async function createTip(this: DorisioClient, data: CreateTipRequest): Pr
       metadata: data.metadata,
       tags: data.tags,
     },
-    { headers }
+    { headers, methodName: 'createTip', ...options }
   );
 
   if (!response.success || !response.data) {
@@ -276,15 +281,21 @@ export async function getCreatorTipsReceived(
 export async function buildPaymentTransaction(
   this: DorisioClient,
   tipId: string,
-  data: BuildTransactionRequest
+  data: BuildTransactionRequest,
+  options?: Partial<RequestOptions>
 ): Promise<BuildTransactionResponse> {
-  const response = await this.request('POST', `/api/v1/transactions/${tipId}/build`, {
-    senderPublicKey: data.senderPublicKey,
-    creatorPublicKey: data.creatorPublicKey,
-    amount: data.amount,
-    assetCode: data.assetCode,
-    assetIssuer: data.assetIssuer,
-  });
+  const response = await this.request(
+    'POST',
+    `/api/v1/transactions/${tipId}/build`,
+    {
+      senderPublicKey: data.senderPublicKey,
+      creatorPublicKey: data.creatorPublicKey,
+      amount: data.amount,
+      assetCode: data.assetCode,
+      assetIssuer: data.assetIssuer,
+    },
+    { methodName: 'buildPaymentTransaction', ...options }
+  );
 
   if (!response.success || !response.data) {
     throw new Error(response.error?.message || 'Failed to build payment transaction');
@@ -322,15 +333,21 @@ export async function buildPaymentTransaction(
 export async function submitPaymentTransaction(
   this: DorisioClient,
   tipId: string,
-  data: SubmitTransactionRequest
+  data: SubmitTransactionRequest,
+  options?: Partial<RequestOptions>
 ): Promise<SubmitTransactionResponse> {
   if (!data.transactionEnvelope) {
     throw new Error('Signed transaction envelope is required');
   }
 
-  const response = await this.request('POST', `/api/v1/transactions/${tipId}/submit`, {
-    transactionEnvelope: data.transactionEnvelope,
-  });
+  const response = await this.request(
+    'POST',
+    `/api/v1/transactions/${tipId}/submit`,
+    {
+      transactionEnvelope: data.transactionEnvelope,
+    },
+    { methodName: 'submitPaymentTransaction', ...options }
+  );
 
   if (!response.success || !response.data) {
     throw new Error(response.error?.message || 'Failed to submit payment transaction');
@@ -363,9 +380,17 @@ export async function submitPaymentTransaction(
  */
 export async function checkTransactionConfirmation(
   this: DorisioClient,
-  tipId: string
+  tipId: string,
+  options?: Partial<RequestOptions>
 ): Promise<Transaction> {
-  const response = await this.request('GET', `/api/v1/transactions/${tipId}/confirm`);
+  const response = options
+    ? await this.request(
+        'GET',
+        `/api/v1/transactions/${tipId}/confirm`,
+        undefined,
+        { methodName: 'checkTransactionConfirmation', ...options }
+      )
+    : await this.request('GET', `/api/v1/transactions/${tipId}/confirm`);
 
   if (!response.success || !response.data) {
     throw new Error(response.error?.message || 'Failed to check transaction confirmation');

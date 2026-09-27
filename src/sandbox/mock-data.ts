@@ -120,7 +120,7 @@ export function generateMockExport(seed = 1) {
  */
 export function generateMockCreator(seed = 1) {
   const names = ['Alice Creator', 'Bob Developer', 'Carol Artist', 'Dave Musician', 'Eve Designer'];
-  const name = names[Math.floor(seededRandom(seed) * names.length)] ?? 'Alice Creator';
+  const name = names[Math.floor(seededRandom(seed) * names.length)] ?? 'Creator';
 
   const createdAt = new Date(
     Date.UTC(2023, 0, 1) + Math.floor(seededRandom(seed + 4) * 365) * 86400000
@@ -189,8 +189,8 @@ export function generateMockWallet(seed = 1) {
 export function generateMockUser(seed = 1) {
   const firstNames = ['Alice', 'Bob', 'Carol', 'Dave', 'Eve'];
   const lastNames = ['Smith', 'Johnson', 'Williams', 'Brown', 'Jones'];
-  const firstName = firstNames[Math.floor(seededRandom(seed) * firstNames.length)] ?? 'Alice';
-  const lastName = lastNames[Math.floor(seededRandom(seed + 1) * lastNames.length)] ?? 'Smith';
+  const firstName = firstNames[Math.floor(seededRandom(seed) * firstNames.length)] ?? 'User';
+  const lastName = lastNames[Math.floor(seededRandom(seed + 1) * lastNames.length)] ?? 'One';
 
   const createdAt = new Date(
     Date.UTC(2023, 0, 1) + Math.floor(seededRandom(seed + 3) * 365) * 86400000
@@ -216,8 +216,9 @@ export function generateMockSession(seed = 1) {
     userId: user.id,
     email: user.email,
     token: `sandbox.jwt.${seededId(seed, 'tok')}`,
+    user,
     expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-    expiresIn: 86_400,
+    expiresIn: 86400,
   };
 }
 
@@ -257,27 +258,26 @@ export function generateMockCreatorEarnings(seed = 1) {
 
 export function generateMockAccountSummary(seed = 1) {
   const user = generateMockUser(seed);
-  const wallet = generateMockWallet(seed + 2);
   return {
     userId: user.id,
     email: user.email,
-    role: user.role ?? 'fan',
+    role: user.role,
+    user,
     balance: {
-      total: 1000,
-      available: 800,
-      pending: 200,
+      total: 100,
+      available: 90,
+      pending: 10,
       wallets: [
         {
-          walletId: wallet.id,
-          available: 800,
-          pending: 200,
-          currency: wallet.currency ?? 'USDC',
+          walletId: seededId(seed + 2, 'wallet'),
+          available: 90,
+          pending: 10,
+          currency: 'USDC',
         },
       ],
     },
-    totalTipsSent: Math.floor(seededRandom(seed + 3) * 50),
-    totalEarnings: Math.floor(seededRandom(seed + 4) * 5000),
-    lastActivityDate: new Date().toISOString(),
+    wallets: [generateMockWallet(seed + 2)],
+    recentTips: generateMockTransactionHistory({ seed: seed + 3, count: 5 }),
   };
 }
 

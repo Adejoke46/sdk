@@ -90,7 +90,12 @@ describe('useCreatorBalance Hook', () => {
       });
       expect(result.current.loading).toBe(false);
       expect(result.current.lastUpdated).toBeDefined();
-      expect(mockRequest).toHaveBeenCalledWith('GET', '/api/v1/creators/creator-123/earnings');
+      expect(mockRequest).toHaveBeenCalledWith(
+        'GET',
+        '/api/v1/creators/creator-123/earnings',
+        undefined,
+        expect.any(Object)
+      );
     });
 
     it('fetches balance with specific wallet and includes wallet assets', async () => {
@@ -118,8 +123,18 @@ describe('useCreatorBalance Hook', () => {
         lumens: '150.5',
         usdc: '500.0',
       });
-      expect(mockRequest).toHaveBeenCalledWith('GET', '/api/v1/creators/creator-123/earnings');
-      expect(mockRequest).toHaveBeenCalledWith('GET', '/api/v1/wallet/wallet-456/balance');
+      expect(mockRequest).toHaveBeenCalledWith(
+        'GET',
+        '/api/v1/creators/creator-123/earnings',
+        undefined,
+        expect.any(Object)
+      );
+      expect(mockRequest).toHaveBeenCalledWith(
+        'GET',
+        '/api/v1/wallet/wallet-456/balance',
+        undefined,
+        expect.any(Object)
+      );
     });
 
     it('recovers gracefully when optional wallet balance fetch fails', async () => {
@@ -352,7 +367,12 @@ describe('useCreatorBalance Hook', () => {
         await result.current.refetch();
       });
 
-      expect(mockRequest).toHaveBeenLastCalledWith('GET', '/api/v1/creators/creator-2/earnings');
+      expect(mockRequest).toHaveBeenLastCalledWith(
+        'GET',
+        '/api/v1/creators/creator-2/earnings',
+        undefined,
+        expect.any(Object)
+      );
     });
 
     it('handles unmount mid-request without error', async () => {

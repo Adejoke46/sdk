@@ -21,6 +21,8 @@ export interface SafeOperation {
   onStart?: () => void;
   /** Runs when the task fails (set local error state here). Receives the message. */
   onError?: (message: string) => void;
+  /** Optional predicate to check if the caller component is still mounted. */
+  isMounted?: () => boolean;
 }
 
 // Errors this module has already reported and re-thrown to a caller. Lets the provider
@@ -68,6 +70,7 @@ export function logRejection(promise: Promise<unknown>, label: string): void {
  *     fallbackMessage: 'Failed to create tip',
  *     onStart: () => setState((s) => ({ ...s, loading: true, error: undefined })),
  *     onError: (error) => setState((s) => ({ ...s, error, loading: false })),
+ *     isMounted: () => isMountedRef.current,
  *   },
  *   async () => client.createTip(data)
  * );
@@ -83,9 +86,12 @@ export async function runSafely<T>(
     op.onStart?.();
     return await task();
   } catch (err) {
-    const message = getErrorMessage(err, op.fallbackMessage);
-    safely('onError', () => op.onError?.(message));
-    safely('setError', () => setError({ message, code: op.code }));
+    const isStillMounted = op.isMounted ? op.isMounted() : true;
+    if (isStillMounted) {
+      const message = getErrorMessage(err, op.fallbackMessage);
+      safely('onError', () => op.onError?.(message));
+      safely('setError', () => setError({ message, code: op.code }));
+    }
     if (typeof err === 'object' && err !== null) rethrown.add(err);
     throw err;
   } finally {

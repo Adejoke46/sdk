@@ -20,9 +20,12 @@ Type-safe client library for Dorisio payment infrastructure. Send tips, verify w
 
 - Exported Zod schemas for consumer validation
 - Full JSDoc documentation with examples
+- OpenAPI 3.0 specification and interactive documentation viewer
+- Backend route generation CLI (`npx dorisio generate-backend`)
 - TypeDoc API reference auto-generated
+- Architecture Decision Records (ADRs) documenting core design choices
 - React hooks for seamless integration
-- 86 unit tests (100% passing)
+- Comprehensive unit tests (100% passing)
 
 💰 **Payment Features**
 
@@ -578,9 +581,33 @@ Full guide: **[docs/ERROR_HANDLING.md](./docs/ERROR_HANDLING.md)**
 - No secrets in logs
 - Input validation with Zod
 
+## CLI & Code Generation
+
+The Dorisio CLI streamlines project scaffolding and backend route integration:
+
+```bash
+# Scaffold Dorisio into a frontend project
+npx dorisio init
+
+# Generate backend route handlers with Zod validation & error handling
+npx dorisio generate-backend --framework express --output ./src/routes
+npx dorisio generate-backend --framework nextjs --output ./app/api/dorisio
+npx dorisio generate-backend --framework fastify --output ./src/routes --javascript
+
+# Generate OpenAPI 3.0 specification from SDK type definitions
+npm run generate:openapi
+```
+
+## Documentation
+
+- 📄 [OpenAPI 3.0 Specification](./docs/openapi.json) ([Interactive API Viewer](./docs/api.html))
+- 🔄 [Migration Guide (v0.0.x to v0.1.x)](./MIGRATION.md)
+- 🏛️ [Architecture Decision Records (ADRs)](./docs/adr/README.md)
+- 📖 [TypeDoc API Documentation](./docs/index.html)
+
 ## Changelog
 
-See [CHANGELOG.md](./CHANGELOG.md) for version history and breaking changes.
+See [CHANGELOG.md](./CHANGELOG.md) for version history and release notes.
 
 ## Contributing
 

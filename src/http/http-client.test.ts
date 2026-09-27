@@ -4,7 +4,8 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { HttpClient } from './http-client';
-import { ApiError } from '../types';
+import { ApiError, DorisioError } from '../types';
+import type { ErrorHandlerContext } from '../types/errors';
 
 describe('HttpClient idempotent retries', () => {
   const originalFetch = globalThis.fetch;
@@ -420,5 +421,179 @@ describe('HttpClient diagnostics and request deduplication', () => {
       id: 2,
     });
     expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe('HttpClient custom error handlers', () => {
+  const originalFetch = globalThis.fetch;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it('calls error handler and retries with custom delay', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 429,
+        json: async () => ({ error: 'Rate limited', code: 'RATE_LIMITED' }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ success: true }),
+      });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const client = new HttpClient('https://api.example.com', {
+      retryAttempts: 3,
+      errorHandler: async (error: DorisioError) => {
+        if (error.statusCode === 429) {
+          return { action: 'retry', delayMs: 100 };
+        }
+        return { action: 'throw' };
+      },
+    });
+
+    const promise = client.request('/api/v1/data', { method: 'GET' });
+    await vi.runAllTimersAsync();
+    const result = await promise;
+
+    expect(result).toEqual({ success: true });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('calls error handler and returns fallback value', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 500,
+      json: async () => ({ error: 'Server error', code: 'INTERNAL' }),
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const client = new HttpClient('https://api.example.com', {
+      retryAttempts: 3,
+      errorHandler: async (error: DorisioError) => {
+        if (error.statusCode && error.statusCode >= 500) {
+          return { action: 'fallback', fallbackValue: { cached: true } };
+        }
+        return { action: 'throw' };
+      },
+    });
+
+    const result = await client.request('/api/v1/data', { method: 'GET' });
+
+    expect(result).toEqual({ cached: true });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('calls error handler and throws when action is throw', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 400,
+      json: async () => ({ error: 'Bad request', code: 'BAD_REQUEST' }),
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const client = new HttpClient('https://api.example.com', {
+      retryAttempts: 3,
+      errorHandler: async () => {
+        return { action: 'throw' };
+      },
+    });
+
+    await expect(client.request('/api/v1/data', { method: 'GET' })).rejects.toBeInstanceOf(ApiError);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('provides error context to handler', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 429,
+      json: async () => ({ error: 'Rate limited' }),
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    let capturedContext: ErrorHandlerContext = {
+      method: 'GET',
+      path: '',
+    };
+    const client = new HttpClient('https://api.example.com', {
+      retryAttempts: 1,
+      errorHandler: async (_error: DorisioError, context: ErrorHandlerContext) => {
+        capturedContext = context;
+        return { action: 'throw' };
+      },
+    });
+
+    await expect(
+      client.request('/api/v1/data', { method: 'POST', body: { test: 'value' } })
+    ).rejects.toBeInstanceOf(ApiError);
+
+    expect(capturedContext).toMatchObject({
+      method: 'POST',
+      path: '/api/v1/data',
+      body: { test: 'value' },
+      attempt: 1,
+    });
+    expect(capturedContext.requestId).toBeDefined();
+  });
+
+  it('handles async error handlers', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 429,
+        json: async () => ({ error: 'Rate limited' }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ success: true }),
+      });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const client = new HttpClient('https://api.example.com', {
+      retryAttempts: 3,
+      errorHandler: async (error: DorisioError) => {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        if (error.statusCode === 429) {
+          return { action: 'retry', delayMs: 50 };
+        }
+        return { action: 'throw' };
+      },
+    });
+
+    const promise = client.request('/api/v1/data', { method: 'GET' });
+    await vi.runAllTimersAsync();
+    const result = await promise;
+
+    expect(result).toEqual({ success: true });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('falls back to normal error handling when error handler throws', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 500,
+      json: async () => ({ error: 'Server error' }),
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const client = new HttpClient('https://api.example.com', {
+      retryAttempts: 1,
+      errorHandler: async () => {
+        throw new Error('Handler failed');
+      },
+    });
+
+    await expect(client.request('/api/v1/data', { method: 'GET' })).rejects.toBeInstanceOf(ApiError);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

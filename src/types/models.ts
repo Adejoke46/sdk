@@ -121,6 +121,7 @@ export interface Transaction {
   message: string | null;
   status: 'pending' | 'confirmed' | 'failed';
   stellarTxHash?: string | null;
+  transactionHash?: string | null;
   createdAt: string;
   updatedAt?: string;
 }

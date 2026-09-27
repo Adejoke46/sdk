@@ -87,12 +87,73 @@ export class TimeoutError extends DorisioError {
 }
 
 /**
+ * Error handler context information
+ */
+export interface ErrorHandlerContext {
+  /** The request method */
+  method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+  /** The request path */
+  path: string;
+  /** The request body (if any) */
+  body?: unknown;
+  /** Request headers */
+  headers?: Record<string, string>;
+  /** Current retry attempt number */
+  attempt?: number;
+  /** Request ID for tracking */
+  requestId?: string;
+}
+
+/**
+ * Error handler action result
+ */
+export type ErrorHandlerAction =
+  | { action: 'retry'; delayMs?: number }
+  | { action: 'fallback'; fallbackValue: unknown }
+  | { action: 'throw' };
+
+/**
+ * Error handler function signature
+ */
+export type ErrorHandler = (
+  error: DorisioError,
+  context: ErrorHandlerContext
+) => ErrorHandlerAction | Promise<ErrorHandlerAction>;
+
+/**
+ * Middleware context for request/response transformation
+ */
+export interface MiddlewareContext {
+  /** The request method */
+  method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+  /** The request path */
+  path: string;
+  /** The request body (if any) */
+  body?: unknown;
+  /** Request headers */
+  headers?: Record<string, string>;
+  /** Request ID for tracking */
+  requestId?: string;
+}
+
+/**
+ * Middleware function signature for request/response transformation
+ */
+export type Middleware = (
+  context: MiddlewareContext,
+  next: () => Promise<unknown>
+) => Promise<unknown>;
+
+/**
  * Legacy error classes (for backward compatibility)
  */
 export class ApiError extends DorisioError {
-  constructor(message: string, statusCode?: number, code?: string) {
+  public readonly retryAfter?: number;
+
+  constructor(message: string, statusCode?: number, code?: string, retryAfter?: number) {
     super(message, statusCode, code);
     this.name = 'ApiError';
+    this.retryAfter = retryAfter;
   }
 }
 

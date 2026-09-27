@@ -11,7 +11,7 @@
  * Always `await` the actions inside try/catch (or `.catch()`) in event handlers.
  */
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import { useDorisio } from './DorisioProvider';
 import { Transaction } from '../types/models';
 import { runSafely } from './safe-async';
@@ -44,46 +44,6 @@ export interface UseCreateTipActions {
  * useCreateTip
  *
  * Manages the tip creation workflow including Stellar transaction building and submission.
- *
- * @example
- * ```tsx
- * function TipComponent() {
- *   const { createTip, buildTransaction, submitTransaction, confirmTransaction, state } = useCreateTip();
- *
- *   const handleCreateTip = async () => {
- *     // Step 1: Create tip
- *     const tip = await createTip({
- *       creatorId: 'creator-123',
- *       amount: 100,
- *       message: 'Great content!',
- *     });
- *
- *     // Step 2: Build Stellar transaction
- *     const { transactionEnvelope } = await buildTransaction(tip.id, {
- *       senderPublicKey: userWallet.publicKey,
- *       creatorPublicKey: creator.walletPublicKey,
- *       amount: '100',
- *     });
- *
- *     // Step 3: Sign with Freighter wallet
- *     const signedEnvelope = await signWithFreighter(transactionEnvelope);
- *
- *     // Step 4: Submit signed transaction
- *     await submitTransaction(tip.id, signedEnvelope);
- *
- *     // Step 5: Confirm on blockchain
- *     const confirmed = await confirmTransaction(tip.id);
- *   };
- *
- *   return (
- *     <div>
- *       {state.loading && <p>Loading...</p>}
- *       {state.error && <p>Error: {state.error}</p>}
- *       <button onClick={handleCreateTip}>Send Tip</button>
- *     </div>
- *   );
- * }
- * ```
  */
 export function useCreateTip(): UseCreateTipState & UseCreateTipActions {
   const { client, setError, setIsLoading } = useDorisio();
@@ -93,9 +53,38 @@ export function useCreateTip(): UseCreateTipState & UseCreateTipActions {
     step: 'idle',
   });
 
+  const isMountedRef = useRef(true);
+  const abortControllersRef = useRef<Set<AbortController>>(new Set());
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    const controllers = abortControllersRef.current;
+    return () => {
+      isMountedRef.current = false;
+      for (const controller of controllers) {
+        controller.abort();
+      }
+      controllers.clear();
+    };
+  }, []);
+
+  const withAbort = <T>(fn: (signal: AbortSignal) => Promise<T>): Promise<T> => {
+    const controller = new AbortController();
+    abortControllersRef.current.add(controller);
+    return fn(controller.signal).finally(() => {
+      abortControllersRef.current.delete(controller);
+    });
+  };
+
+  const safeSetState = useCallback((fn: React.SetStateAction<UseCreateTipState>) => {
+    if (!isMountedRef.current) return;
+    setState(fn);
+  }, []);
+
   const start = (step: UseCreateTipState['step']) => () =>
-    setState((s) => ({ ...s, loading: true, step, error: undefined }));
-  const fail = (error: string) => setState((s) => ({ ...s, error, step: 'error', loading: false }));
+    safeSetState((s) => ({ ...s, loading: true, step, error: undefined }));
+  const fail = (error: string) =>
+    safeSetState((s) => ({ ...s, error, step: 'error', loading: false }));
 
   const createTip = useCallback(
     (data: CreateTipRequest): Promise<Transaction> =>
@@ -106,14 +95,16 @@ export function useCreateTip(): UseCreateTipState & UseCreateTipActions {
           fallbackMessage: 'Failed to create tip',
           onStart: start('creating'),
           onError: fail,
+          isMounted: () => isMountedRef.current,
         },
-        async () => {
-          const tip = await client.createTip(data);
-          setState((s) => ({ ...s, data: tip, step: 'idle', loading: false }));
-          return tip;
-        }
+        () =>
+          withAbort(async (signal) => {
+            const tip = await client.createTip(data, { signal });
+            safeSetState((s) => ({ ...s, data: tip, step: 'idle', loading: false }));
+            return tip;
+          })
       ),
-    [client, setError, setIsLoading]
+    [client, setError, setIsLoading, safeSetState]
   );
 
   const buildTransaction = useCallback(
@@ -125,14 +116,16 @@ export function useCreateTip(): UseCreateTipState & UseCreateTipActions {
           fallbackMessage: 'Failed to build transaction',
           onStart: start('building'),
           onError: fail,
+          isMounted: () => isMountedRef.current,
         },
-        async () => {
-          const result = await client.buildPaymentTransaction(tipId, data);
-          setState((s) => ({ ...s, step: 'idle', loading: false }));
-          return result;
-        }
+        () =>
+          withAbort(async (signal) => {
+            const result = await client.buildPaymentTransaction(tipId, data, { signal });
+            safeSetState((s) => ({ ...s, step: 'idle', loading: false }));
+            return result;
+          })
       ),
-    [client, setError, setIsLoading]
+    [client, setError, setIsLoading, safeSetState]
   );
 
   const submitTransaction = useCallback(
@@ -144,16 +137,22 @@ export function useCreateTip(): UseCreateTipState & UseCreateTipActions {
           fallbackMessage: 'Failed to submit transaction',
           onStart: start('submitting'),
           onError: fail,
+          isMounted: () => isMountedRef.current,
         },
-        async () => {
-          const result = await client.submitPaymentTransaction(tipId, {
-            transactionEnvelope: envelope,
-          });
-          setState((s) => ({ ...s, step: 'idle', loading: false }));
-          return result;
-        }
+        () =>
+          withAbort(async (signal) => {
+            const result = await client.submitPaymentTransaction(
+              tipId,
+              {
+                transactionEnvelope: envelope,
+              },
+              { signal }
+            );
+            safeSetState((s) => ({ ...s, step: 'idle', loading: false }));
+            return result;
+          })
       ),
-    [client, setError, setIsLoading]
+    [client, setError, setIsLoading, safeSetState]
   );
 
   const confirmTransaction = useCallback(
@@ -165,22 +164,24 @@ export function useCreateTip(): UseCreateTipState & UseCreateTipActions {
           fallbackMessage: 'Failed to confirm transaction',
           onStart: start('confirming'),
           onError: fail,
+          isMounted: () => isMountedRef.current,
         },
-        async () => {
-          const tip = await client.checkTransactionConfirmation(tipId);
-          setState((s) => ({ ...s, data: tip, step: 'success', loading: false }));
-          return tip;
-        }
+        () =>
+          withAbort(async (signal) => {
+            const tip = await client.checkTransactionConfirmation(tipId, { signal });
+            safeSetState((s) => ({ ...s, data: tip, step: 'success', loading: false }));
+            return tip;
+          })
       ),
-    [client, setError, setIsLoading]
+    [client, setError, setIsLoading, safeSetState]
   );
 
   const reset = useCallback(() => {
-    setState({
+    safeSetState({
       loading: false,
       step: 'idle',
     });
-  }, []);
+  }, [safeSetState]);
 
   return {
     ...state,

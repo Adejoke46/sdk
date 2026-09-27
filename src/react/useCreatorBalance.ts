@@ -73,6 +73,37 @@ export function useCreatorBalance(
     loading: false,
   });
 
+  const isMountedRef = useRef(true);
+  const abortControllersRef = useRef<Set<AbortController>>(new Set());
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    const controllers = abortControllersRef.current;
+    return () => {
+      isMountedRef.current = false;
+      for (const controller of controllers) {
+        controller.abort();
+      }
+      controllers.clear();
+    };
+  }, []);
+
+  const withAbort = <T>(fn: (signal: AbortSignal) => Promise<T>): Promise<T> => {
+    const controller = new AbortController();
+    abortControllersRef.current.add(controller);
+    return fn(controller.signal).finally(() => {
+      abortControllersRef.current.delete(controller);
+    });
+  };
+
+  const safeSetState = useCallback(
+    (fn: React.SetStateAction<UseCreatorBalanceState>) => {
+      if (!isMountedRef.current) return;
+      setState(fn);
+    },
+    []
+  );
+
   const [creatorId, setCreatorId] = useState(initialCreatorId);
 
   const creatorIdRef = useRef(creatorId);
@@ -87,62 +118,70 @@ export function useCreatorBalance(
           code: 'FETCH_BALANCE_ERROR',
           fallbackMessage: 'Failed to fetch balance',
           onStart: () => {
-            setState((s) => ({ ...s, loading: true, error: undefined }));
-            setCreatorId(id);
+            safeSetState((s) => ({ ...s, loading: true, error: undefined }));
+            if (isMountedRef.current) {
+              setCreatorId(id);
+            }
             creatorIdRef.current = id;
           },
-          onError: (error) => setState((s) => ({ ...s, error, loading: false })),
+          onError: (error) => safeSetState((s) => ({ ...s, error, loading: false })),
+          isMounted: () => isMountedRef.current,
         },
-        async () => {
-          // Persist walletId when provided so refetch keeps the same filter.
-          const resolvedWalletId = walletId !== undefined ? walletId : walletIdRef.current;
-          if (walletId !== undefined) {
-            walletIdRef.current = walletId;
-          }
-
-          // Fetch earnings data
-          const earningsResponse = await client.request<{
-            totalEarnings: number;
-            pendingBalance: number;
-            lumens?: string;
-            usdc?: string;
-          }>('GET', `/api/v1/creators/${id}/earnings`);
-
-          if (!earningsResponse.success || !earningsResponse.data) {
-            throw new Error(earningsResponse.error?.message || 'Failed to fetch creator earnings');
-          }
-
-          const earningsSchema = ApiCreatorEarningsSchema.parse(earningsResponse.data);
-
-          let balance: CreatorBalance = {
-            totalEarnings: earningsSchema.totalEarnings,
-            pendingBalance: earningsSchema.pendingBalance,
-          };
-
-          // Optionally fetch wallet balance
-          if (resolvedWalletId) {
-            try {
-              const balanceResponse = await client.request<any>(
-                'GET',
-                `/api/v1/wallet/${resolvedWalletId}/balance`
-              );
-
-              if (balanceResponse.success && balanceResponse.data) {
-                const d = balanceResponse.data;
-                balance = { ...balance, lumens: d.lumens, usdc: d.usdc };
-              }
-            } catch (err) {
-              // Wallet balance is optional; earnings still succeed.
-              console.warn('Failed to fetch wallet balance:', err);
+        () =>
+          withAbort(async (signal) => {
+            // Persist walletId when provided so refetch keeps the same filter.
+            const resolvedWalletId = walletId !== undefined ? walletId : walletIdRef.current;
+            if (walletId !== undefined) {
+              walletIdRef.current = walletId;
             }
-          }
 
-          setState((s) => ({ ...s, balance, lastUpdated: Date.now(), loading: false }));
+            // Fetch earnings data
+            const earningsResponse = await client.request<{
+              totalEarnings: number;
+              pendingBalance: number;
+              lumens?: string;
+              usdc?: string;
+            }>('GET', `/api/v1/creators/${id}/earnings`, undefined, { signal });
 
-          return balance;
-        }
+            if (!earningsResponse.success || !earningsResponse.data) {
+              throw new Error(
+                earningsResponse.error?.message || 'Failed to fetch creator earnings'
+              );
+            }
+
+            const earningsSchema = ApiCreatorEarningsSchema.parse(earningsResponse.data);
+
+            let balance: CreatorBalance = {
+              totalEarnings: earningsSchema.totalEarnings,
+              pendingBalance: earningsSchema.pendingBalance,
+            };
+
+            // Optionally fetch wallet balance
+            if (resolvedWalletId) {
+              try {
+                const balanceResponse = await client.request<{ lumens?: string; usdc?: string }>(
+                  'GET',
+                  `/api/v1/wallet/${resolvedWalletId}/balance`,
+                  undefined,
+                  { signal }
+                );
+
+                if (balanceResponse.success && balanceResponse.data) {
+                  const d = balanceResponse.data;
+                  balance = { ...balance, lumens: d.lumens, usdc: d.usdc };
+                }
+              } catch (err) {
+                // Wallet balance is optional; earnings still succeed.
+                console.warn('Failed to fetch wallet balance:', err);
+              }
+            }
+
+            safeSetState((s) => ({ ...s, balance, lastUpdated: Date.now(), loading: false }));
+
+            return balance;
+          })
       ),
-    [client, setError, setIsLoading]
+    [client, setError, setIsLoading, safeSetState]
   );
 
   const refetch = useCallback(async () => {
@@ -153,13 +192,15 @@ export function useCreatorBalance(
   }, [fetchBalance]);
 
   const reset = useCallback(() => {
-    setState({
+    safeSetState({
       loading: false,
     });
-    setCreatorId(undefined);
+    if (isMountedRef.current) {
+      setCreatorId(undefined);
+    }
     creatorIdRef.current = undefined;
     walletIdRef.current = undefined;
-  }, []);
+  }, [safeSetState]);
 
   // Auto-fetch on mount
   useEffect(() => {
