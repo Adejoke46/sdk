@@ -36,6 +36,19 @@ export {
   type MetricsCallback,
 } from './lib/metrics';
 
+// Re-export client-side analytics (Issue #60)
+export {
+  Analytics,
+  percentile,
+  type AnalyticsOptions,
+  type AnalyticsEntry,
+  type AnalyticsEvent,
+  type AnalyticsListener,
+  type AnalyticsSnapshot,
+  type AnalyticsExportFormat,
+  type MethodAnalytics,
+  type ErrorPattern,
+} from './lib/analytics';
 
 // Re-export types
 export type { ApiResponse, PaginationMeta, PaginatedResponse } from './types/api';

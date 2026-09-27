@@ -42,6 +42,12 @@ import {
   ErrorHandler,
   Middleware,
 } from './types/errors';
+import {
+  Analytics,
+  type AnalyticsOptions,
+  type AnalyticsListener,
+  type AnalyticsSnapshot,
+} from './lib/analytics';
 
 export type ClientMode = 'sandbox' | 'live' | 'production';
 
@@ -66,6 +72,11 @@ export interface ClientConfig {
   deduplicationWindow?: number;
   /** Custom error handler for error recovery strategies */
   errorHandler?: ErrorHandler;
+  /**
+   * Client-side analytics tracking. Enabled by default; pass `false` to opt
+   * out entirely (useful for latency-critical or privacy-sensitive hosts).
+   */
+  analytics?: AnalyticsOptions | false;
 }
 
 function normalizeClientMode(mode?: ClientMode): 'live' | 'sandbox' {
@@ -80,6 +91,7 @@ export class DorisioClient {
   private mode: 'live' | 'sandbox';
   private errorHandler?: ErrorHandler;
   private middleware: Middleware[] = [];
+  private analytics: Analytics;
 
   constructor(config: ClientConfig) {
     const mode = normalizeClientMode(config.mode);
@@ -102,6 +114,10 @@ export class DorisioClient {
     this.token = config.token;
     this.mode = mode;
     this.errorHandler = config.errorHandler;
+
+    this.analytics = new Analytics(
+      config.analytics === false ? { enabled: false } : config.analytics
+    );
 
     this.httpClient = new HttpClient(this.config.baseUrl, {
       timeout: this.config.timeout,
@@ -214,6 +230,7 @@ export class DorisioClient {
   ): Promise<ApiResponse<T>> {
     const requestBody = body;
     const requestHeaders = options?.headers;
+    const startedAt = Date.now();
 
     // Execute middleware chain for request transformation
     const executeMiddleware = async (index: number): Promise<ApiResponse<T>> => {
@@ -251,7 +268,50 @@ export class DorisioClient {
       return result as ApiResponse<T>;
     };
 
-    return executeMiddleware(0);
+    try {
+      const response = await executeMiddleware(0);
+      this.recordOperation(method, path, startedAt, true);
+      return response;
+    } catch (error) {
+      this.recordOperation(method, path, startedAt, false, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Feed one finished operation into the analytics tracker.
+   *
+   * `error` is duck-typed rather than `instanceof`-checked so errors coming from
+   * another realm (bundlers, workers, test doubles) are still classified.
+   */
+  private recordOperation(
+    method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE',
+    path: string,
+    startedAt: number,
+    success: boolean,
+    error?: unknown
+  ): void {
+    let errorCode: string | undefined;
+    let statusCode: number | undefined;
+
+    if (error && typeof error === 'object') {
+      const candidate = error as { code?: unknown; statusCode?: unknown };
+      if (typeof candidate.code === 'string' && candidate.code.length > 0) {
+        errorCode = candidate.code;
+      }
+      if (typeof candidate.statusCode === 'number') {
+        statusCode = candidate.statusCode;
+      }
+    }
+
+    this.analytics.record({
+      method: `${method} ${path}`,
+      latency: Math.max(0, Date.now() - startedAt),
+      success,
+      statusCode,
+      errorCode,
+      errorMessage: error instanceof Error ? error.message : undefined,
+    });
   }
 
   /**
@@ -266,6 +326,36 @@ export class DorisioClient {
    */
   getConfig(): Readonly<ClientConfig & { timeout: number; mode: 'live' | 'sandbox' }> {
     return { ...this.config };
+  }
+
+  /**
+   * Get the analytics tracker (advanced usage: subscribe, reset, toggle).
+   */
+  getAnalytics(): Analytics {
+    return this.analytics;
+  }
+
+  /**
+   * Current analytics snapshot: call counts, success/error rates, latency
+   * percentiles (p50/p95/p99) and error patterns.
+   */
+  getAnalyticsSnapshot(): AnalyticsSnapshot {
+    return this.analytics.getSnapshot();
+  }
+
+  /**
+   * Export collected metrics as pretty JSON (`json`) or CSV (`csv`).
+   */
+  exportAnalytics(format: 'json' | 'csv' = 'json'): string {
+    return this.analytics.exportMetrics(format);
+  }
+
+  /**
+   * Stream an event after every recorded operation. Returns an unsubscribe
+   * function; use it to forward metrics to your own backend.
+   */
+  onAnalyticsEvent(listener: AnalyticsListener): () => void {
+    return this.analytics.subscribe(listener);
   }
 
   /**
