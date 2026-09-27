@@ -1,5 +1,8 @@
 # Dorisio SDK
 
+For production retry, backoff, circuit-breaker, and monitoring guidance, see
+[`docs/RATE_LIMITING.md`](docs/RATE_LIMITING.md).
+
 Type-safe client library for Dorisio payment infrastructure. Send tips, verify wallets, and manage creator payouts on Stellar.
 
 [![npm version](https://img.shields.io/npm/v/dorisio-sdk.svg)](https://www.npmjs.com/package/dorisio-sdk)
