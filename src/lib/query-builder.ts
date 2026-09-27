@@ -78,12 +78,7 @@ interface PaginatedApiData {
 
 /**
  * Parse pagination metadata from response.
- * Pass the request `offset` for offset-based backends that don't echo `page`.
  */
-export function parsePaginationMeta(
-  response: any,
-  offset?: number
-): {
 export function parsePaginationMeta(response: PaginatedApiData): {
   page: number;
   pageSize: number;
