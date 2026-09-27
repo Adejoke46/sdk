@@ -10,7 +10,6 @@ import { ApiError, DorisioError, ErrorHandler, ErrorHandlerContext } from '../ty
 import { InterceptorManager } from './interceptors';
 import { generateRequestId, isRequestIdempotent, RetryConflictError } from './retry-manager';
 import { MockRouter, type SandboxHistoryEntry } from '../sandbox/mock-router';
-import { isRequestIdempotent } from './retry-manager';
 
 export type HttpClientMode = 'live' | 'sandbox' | 'production';
 
