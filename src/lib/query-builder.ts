@@ -91,20 +91,10 @@ export function parsePaginationMeta(response: PaginatedApiData): {
   return { page, pageSize, total, hasMore: page * pageSize < total };
 }
 
-/**
- * List tips with filtering and pagination
- */
-export async function listTips(
-  client: QueryClient,
-  options: QueryOptions = {}
-): Promise<PaginationResult<Transaction>> {
-  const query = buildQueryString(options);
-  const response = await client.request<{
-    transactions?: Transaction[];
-    page?: number;
-    pageSize?: number;
-    total?: number;
-  }>('GET', `/api/v1/transactions/history${query}`);
+/** Encode an offset as an opaque cursor for {@link decodeCursor} to read back. */
+export function encodeCursor(offset: number): string {
+  return btoa(JSON.stringify({ offset }));
+}
 
 /** Decode a cursor created by {@link encodeCursor}. Returns null for server-defined cursors. */
 export function decodeCursor(cursor: string): { offset: number } | null {
@@ -118,21 +108,6 @@ export function decodeCursor(cursor: string): { offset: number } | null {
   }
 }
 
-  const data = response.data ?? {};
-  const { page, pageSize, total, hasMore } = parsePaginationMeta(data);
-  const offset = options.offset ?? 0;
-
-  return {
-    items: data.transactions ?? [],
-    total,
-    page,
-    pageSize,
-    hasMore,
-    nextCursor: hasMore ? (data.nextCursor ?? encodeCursor(start + items.length)) : undefined,
-    prevCursor:
-      data.prevCursor ?? (start > 0 ? encodeCursor(Math.max(0, start - pageSize)) : undefined),
-  };
-}
 
 // Prefetched pages, per client. A page is consumed once so cached data is never stale.
 const prefetchCache = new WeakMap<object, Map<string, Promise<PaginationResult<any> | null>>>();
@@ -206,7 +181,7 @@ export async function listTips<T = Tip>(
  * List creator tips with filtering and pagination
  */
 export async function listCreatorTips(
-  client: QueryClient,
+  client: ListClient,
   creatorId: string,
   options: QueryOptions = {}
 ): Promise<PaginationResult<Transaction>> {
@@ -241,7 +216,7 @@ export async function listCreatorTips(
  * List creators with filtering and pagination
  */
 export async function listCreators(
-  client: QueryClient,
+  client: ListClient,
   options: QueryOptions = {}
 ): Promise<PaginationResult<Creator>> {
   const query = buildQueryString(options);
@@ -275,7 +250,7 @@ export async function listCreators(
  * List verified creators
  */
 export async function listVerifiedCreators(
-  client: QueryClient,
+  client: ListClient,
   options: QueryOptions = {}
 ): Promise<PaginationResult<Creator>> {
   return listCreators(client, {
@@ -291,11 +266,11 @@ export class Paginator<T> {
   private offset = 0;
   private readonly pageSize: number;
   private readonly endpoint: string;
-  private readonly client: QueryClient;
+  private readonly client: ListClient;
   private readonly filters?: Record<string, string | number | boolean>;
 
   constructor(
-    client: QueryClient,
+    client: ListClient,
     endpoint: 'tips' | 'creators' | 'creator-tips',
     options: QueryOptions = {}
   ) {
@@ -356,7 +331,7 @@ export class Paginator<T> {
  * Wrap any list function in a {@link Paginator}.
  */
 export function createPaginator<T>(
-  client: QueryClient,
+  client: ListClient,
   endpoint: 'tips' | 'creators' | 'creator-tips',
   options?: QueryOptions
 ): Paginator<T> {
