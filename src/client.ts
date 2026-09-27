@@ -42,6 +42,12 @@ import {
   ErrorHandler,
   Middleware,
 } from './types/errors';
+import {
+  WebSocketClient,
+  type RealtimeListener,
+  type WebSocketClientOptions,
+  type WebSocketState,
+} from './websocket/websocket-client';
 
 export type ClientMode = 'sandbox' | 'live' | 'production';
 
@@ -66,6 +72,11 @@ export interface ClientConfig {
   deduplicationWindow?: number;
   /** Custom error handler for error recovery strategies */
   errorHandler?: ErrorHandler;
+  /**
+   * Real-time transport used by {@link DorisioClient.subscribeRealtime}.
+   * Pass `false` to disable real-time support entirely.
+   */
+  websocket?: WebSocketClientOptions | false;
 }
 
 function normalizeClientMode(mode?: ClientMode): 'live' | 'sandbox' {
@@ -80,6 +91,7 @@ export class DorisioClient {
   private mode: 'live' | 'sandbox';
   private errorHandler?: ErrorHandler;
   private middleware: Middleware[] = [];
+  private realtime: WebSocketClient | null = null;
 
   constructor(config: ClientConfig) {
     const mode = normalizeClientMode(config.mode);
@@ -97,6 +109,7 @@ export class DorisioClient {
       deduplicateRequests: config.deduplicateRequests,
       deduplicationWindow: config.deduplicationWindow,
       errorHandler: config.errorHandler,
+      websocket: config.websocket,
     };
 
     this.token = config.token;
@@ -266,6 +279,63 @@ export class DorisioClient {
    */
   getConfig(): Readonly<ClientConfig & { timeout: number; mode: 'live' | 'sandbox' }> {
     return { ...this.config };
+  }
+
+  /**
+   * Start real-time sync over WebSocket.
+   *
+   * Uses `options` when given, otherwise `ClientConfig.websocket`. The client
+   * token is passed to the socket unless the options already carry one, and the
+   * returned {@link WebSocketClient} is reused by `subscribeRealtime()`.
+   */
+  async enableRealtime(options?: WebSocketClientOptions): Promise<WebSocketClient> {
+    const resolved =
+      options ?? (this.config.websocket === false ? undefined : this.config.websocket);
+    if (!resolved || typeof resolved.url !== 'string' || resolved.url.length === 0) {
+      throw new Error(
+        'enableRealtime() requires a WebSocket url (pass one, or set ClientConfig.websocket)'
+      );
+    }
+
+    if (this.realtime) this.disableRealtime();
+
+    this.realtime = new WebSocketClient({ token: this.token, ...resolved });
+    await this.realtime.connect();
+    return this.realtime;
+  }
+
+  /** The real-time client, or `null` when real-time is not enabled. */
+  getRealtime(): WebSocketClient | null {
+    return this.realtime;
+  }
+
+  /** Current real-time state, or `disabled` when not enabled. */
+  getRealtimeState(): WebSocketState | 'disabled' {
+    return this.realtime ? this.realtime.getState() : 'disabled';
+  }
+
+  /**
+   * Subscribe to a real-time channel. Requires {@link enableRealtime} (or a
+   * `ClientConfig.websocket`) first. Returns an unsubscribe function.
+   */
+  subscribeRealtime<T = unknown>(
+    channel: string,
+    listener: RealtimeListener<T>,
+    params?: Record<string, unknown>
+  ): () => void {
+    if (!this.realtime) {
+      throw new Error(
+        'Realtime is not enabled: call await enableRealtime() (or set ClientConfig.websocket) first'
+      );
+    }
+    return this.realtime.subscribe(channel, listener, params);
+  }
+
+  /** Close the real-time connection and drop the client. */
+  disableRealtime(): void {
+    if (!this.realtime) return;
+    this.realtime.disconnect();
+    this.realtime = null;
   }
 
   /**
