@@ -63,6 +63,22 @@ export type {
   MiddlewareContext,
 } from './errors';
 
+export type {
+  BatchResult,
+  BatchSuccess,
+  BatchFailure,
+  BatchProcessorOptions,
+} from '../http/batch-processor';
+export { BatchProcessor, processBatch, retryBatchFailures } from '../http/batch-processor';
+
+export type {
+  LogLevel,
+  LogEntry,
+  LogHandler,
+  LoggerOptions,
+} from '../lib/logger';
+export { Logger, createLogger } from '../lib/logger';
+
 // Schema exports for consumer validation
 export {
   Schemas,

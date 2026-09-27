@@ -12,6 +12,7 @@ import {
   ApiBalanceInfoSchema,
   ApiCreatorPendingPayoutSchema,
 } from '../types/schemas';
+import { RequestOptions } from '../http/http-client';
 
 export interface BalanceInfo {
   walletId: string;
@@ -30,10 +31,31 @@ export interface AccountBalance {
 
 /**
  * Get user's total balance across all wallets
+ * GET /users/:userId/balance
+ *
+ * @param userId - Unique user identifier (UUID)
+ * @param options - Optional request options including custom HTTP headers
+ * @returns AccountBalance object summarizing wallet balances
+ *
+ * @throws {Error} If userId is empty or request fails
+ *
+ * @example
+ * ```ts
+ * const balance = await client.getBalance('user-123', {
+ *   headers: { 'X-Request-ID': 'balance-check-01' },
+ * });
+ * console.log(`Total available balance: $${balance.available}`);
+ * ```
  */
-export async function getBalance(this: DorisioClient, userId: string): Promise<AccountBalance> {
+export async function getBalance(
+  this: DorisioClient,
+  userId: string,
+  options?: Partial<RequestOptions>
+): Promise<AccountBalance> {
   RequestValidator.nonEmptyString(userId, 'userId');
-  const response = await this.request('GET', `/users/${userId}/balance`);
+  const response = options
+    ? await this.request('GET', `/users/${userId}/balance`, undefined, options)
+    : await this.request('GET', `/users/${userId}/balance`);
 
   if (!response.success || !response.data) {
     throw new Error(`Failed to fetch balance for user: ${userId}`);
@@ -56,13 +78,31 @@ export async function getBalance(this: DorisioClient, userId: string): Promise<A
 
 /**
  * Get single wallet balance
+ * GET /wallets/:walletId/balance
+ *
+ * @param walletId - Unique wallet identifier (UUID)
+ * @param options - Optional request options including custom HTTP headers
+ * @returns BalanceInfo for the specified wallet
+ *
+ * @throws {Error} If walletId is empty or request fails
+ *
+ * @example
+ * ```ts
+ * const walletBalance = await client.getWalletBalance('wallet-abc', {
+ *   headers: { 'X-Custom-Source': 'mobile-app' },
+ * });
+ * console.log(`Wallet ${walletBalance.walletId} total: $${walletBalance.total}`);
+ * ```
  */
 export async function getWalletBalance(
   this: DorisioClient,
-  walletId: string
+  walletId: string,
+  options?: Partial<RequestOptions>
 ): Promise<BalanceInfo> {
   RequestValidator.nonEmptyString(walletId, 'walletId');
-  const response = await this.request('GET', `/wallets/${walletId}/balance`);
+  const response = options
+    ? await this.request('GET', `/wallets/${walletId}/balance`, undefined, options)
+    : await this.request('GET', `/wallets/${walletId}/balance`);
 
   if (!response.success || !response.data) {
     throw new Error(`Failed to fetch wallet balance: ${walletId}`);
@@ -84,17 +124,41 @@ export async function getWalletBalance(
 
 /**
  * Get creator's pending payout
+ * GET /creators/:creatorId/payout-pending
+ *
+ * @param creatorId - Unique creator identifier (UUID)
+ * @param options - Optional request options including custom HTTP headers
+ * @returns Pending payout amount, threshold, and next payout date
+ *
+ * @throws {Error} If creatorId is empty or request fails
+ *
+ * @example
+ * ```ts
+ * const payout = await client.getCreatorPendingPayout('creator-123');
+ * console.log(`Pending: $${payout.pending}, Threshold: $${payout.minimumThreshold}`);
+ * ```
  */
 export async function getCreatorPendingPayout(
   this: DorisioClient,
-  creatorId: string
+  creatorId: string,
+  options?: Partial<RequestOptions>
 ): Promise<{
   pending: number;
   nextPayoutDate?: string;
   minimumThreshold: number;
 }> {
   RequestValidator.nonEmptyString(creatorId, 'creatorId');
-  const response = await this.request('GET', `/creators/${creatorId}/payout-pending`);
+  const response = options
+    ? await this.request(
+        'GET',
+        `/creators/${creatorId}/payout-pending`,
+        undefined,
+        options
+      )
+    : await this.request(
+        'GET',
+        `/creators/${creatorId}/payout-pending`
+      );
 
   if (!response.success || !response.data) {
     throw new Error(`Failed to fetch pending payout for creator: ${creatorId}`);
@@ -110,10 +174,39 @@ export async function getCreatorPendingPayout(
 
 /**
  * Check if minimum payout threshold is reached
+ * GET /creators/:creatorId/can-payout
+ *
+ * @param creatorId - Unique creator identifier (UUID)
+ * @param options - Optional request options including custom HTTP headers
+ * @returns True if payout threshold is reached
+ *
+ * @throws {Error} If request fails
+ *
+ * @example
+ * ```ts
+ * const eligible = await client.canPayout('creator-123');
+ * if (eligible) {
+ *   console.log('Creator is eligible for payout');
+ * }
+ * ```
  */
-export async function canPayout(this: DorisioClient, creatorId: string): Promise<boolean> {
+export async function canPayout(
+  this: DorisioClient,
+  creatorId: string,
+  options?: Partial<RequestOptions>
+): Promise<boolean> {
   RequestValidator.nonEmptyString(creatorId, 'creatorId');
-  const response = await this.request('GET', `/creators/${creatorId}/can-payout`);
+  const response = options
+    ? await this.request(
+        'GET',
+        `/creators/${creatorId}/can-payout`,
+        undefined,
+        options
+      )
+    : await this.request(
+        'GET',
+        `/creators/${creatorId}/can-payout`
+      );
 
   if (!response.success || response.data === undefined) {
     throw new Error(`Failed to check payout eligibility for creator: ${creatorId}`);
@@ -124,8 +217,25 @@ export async function canPayout(this: DorisioClient, creatorId: string): Promise
 
 /**
  * Get account summary with balance and stats
+ * GET /users/me/summary
+ *
+ * @param options - Optional request options including custom HTTP headers
+ * @returns Full account profile, role, balance, and tipping statistics
+ *
+ * @throws {Error} If account summary cannot be fetched
+ *
+ * @example
+ * ```ts
+ * const summary = await client.getAccountSummary({
+ *   headers: { 'X-Request-ID': 'summary-req-01' },
+ * });
+ * console.log(`Logged in as ${summary.email}, total earnings: $${summary.totalEarnings}`);
+ * ```
  */
-export async function getAccountSummary(this: DorisioClient): Promise<{
+export async function getAccountSummary(
+  this: DorisioClient,
+  options?: Partial<RequestOptions>
+): Promise<{
   userId: string;
   email: string;
   role: string;
@@ -134,7 +244,9 @@ export async function getAccountSummary(this: DorisioClient): Promise<{
   totalEarnings?: number;
   lastActivityDate?: string;
 }> {
-  const response = await this.request('GET', '/users/me/summary');
+  const response = options
+    ? await this.request('GET', '/users/me/summary', undefined, options)
+    : await this.request('GET', '/users/me/summary');
 
   if (!response.success || !response.data) {
     throw new Error('Failed to fetch account summary');

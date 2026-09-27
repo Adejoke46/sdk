@@ -3,14 +3,16 @@
  *
  * Base HTTP client for making requests to the backend API.
  * Handles request/response formatting, retries, error handling,
- * and sandbox/mock mode for offline testing.
+ * request fingerprinting, custom headers, and sandbox/mock mode for offline testing.
  */
 
 import { ApiError, DorisioError, ErrorHandler, ErrorHandlerContext } from '../types';
 import { InterceptorManager } from './interceptors';
 import { generateRequestId, isRequestIdempotent, RetryConflictError } from './retry-manager';
 import { MockRouter, type SandboxHistoryEntry } from '../sandbox/mock-router';
-import { isRequestIdempotent } from './retry-manager';
+import { RequestQueue } from './request-queue';
+import { OfflineQueue } from './offline-queue';
+import { MetricsCollector, type MetricsCallback, type MetricsSummary } from '../lib/metrics';
 
 export type HttpClientMode = 'live' | 'sandbox' | 'production';
 
@@ -38,6 +40,10 @@ export interface RequestOptions {
    * omitted.
    */
   requestId?: string;
+  /**
+   * Optional name of the calling SDK method for logging / diagnostics.
+   */
+  methodName?: string;
 }
 
 export interface HttpClientOptions {
@@ -60,6 +66,28 @@ export interface HttpClientOptions {
   deduplicationWindow?: number;
   /** Custom error handler for error recovery strategies */
   errorHandler?: ErrorHandler;
+  /** Custom request ID generator function */
+  requestIdGenerator?: () => string;
+  /**
+   * Enable request queue with concurrency control and automatic 429 backoff.
+   */
+  enableRequestQueue?: boolean;
+  /**
+   * Maximum concurrent requests in flight when request queue is enabled (default: 5).
+   */
+  maxConcurrentRequests?: number;
+  /**
+   * Enable offline mutation queue.
+   */
+  enableOfflineQueue?: boolean;
+  /**
+   * Enable performance metrics collection.
+   */
+  enableMetrics?: boolean;
+  /**
+   * Optional callback invoked whenever a request metric is recorded.
+   */
+  metricsCallback?: MetricsCallback;
 }
 
 function normalizeMode(mode?: HttpClientMode): 'live' | 'sandbox' {
@@ -86,7 +114,7 @@ function hasHeader(headers: Record<string, string>, name: string): boolean {
 
 /**
  * Attach the logical request id to the outgoing headers so retries and server
- * logs can be correlated. Callers who set their own `X-Request-Id` win.
+ * logs can be correlated. Callers who set their own `X-Request-Id` or `X-Request-ID` win.
  */
 function withRequestIdHeader(
   headers: Record<string, string> | undefined,
@@ -151,6 +179,10 @@ export class HttpClient {
   private deduplicationWindow: number;
   private deduplicationCache = new Map<string, CachedRequest>();
   private errorHandler?: ErrorHandler;
+  private requestIdGenerator?: () => string;
+  private requestQueue?: RequestQueue;
+  private offlineQueue?: OfflineQueue;
+  private metricsCollector: MetricsCollector;
 
   constructor(baseUrl: string, options?: HttpClientOptions) {
     this.baseUrl = baseUrl.replace(/\/$/, '');
@@ -172,8 +204,31 @@ export class HttpClient {
     this.deduplicateRequests = options?.deduplicateRequests ?? false;
     this.deduplicationWindow = options?.deduplicationWindow ?? 1000;
     this.errorHandler = options?.errorHandler;
+    this.requestIdGenerator = options?.requestIdGenerator;
+
+    if (options?.enableRequestQueue) {
+      this.requestQueue = new RequestQueue({
+        maxConcurrentRequests: options.maxConcurrentRequests,
+      });
+    }
+
+    if (options?.enableOfflineQueue) {
+      this.offlineQueue = new OfflineQueue();
+    }
+
+    this.metricsCollector = new MetricsCollector({
+      enabled: options?.enableMetrics ?? false,
+      callback: options?.metricsCallback,
+    });
+
     if (this.deduplicationWindow < 0) {
       throw new Error('deduplicationWindow must be greater than or equal to zero');
+    }
+  }
+
+  private log(message: string, data?: unknown): void {
+    if (this.debug) {
+      this.logger(message, data);
     }
   }
 
@@ -199,6 +254,13 @@ export class HttpClient {
    */
   setErrorHandler(handler: ErrorHandler): void {
     this.errorHandler = handler;
+  }
+
+  /**
+   * Set custom request ID generator
+   */
+  setRequestIdGenerator(generator: () => string): void {
+    this.requestIdGenerator = generator;
   }
 
   /**
@@ -266,7 +328,15 @@ export class HttpClient {
    * records performance metrics, and supports 401 token refresh.
    */
   async request<T>(path: string, options: RequestOptions): Promise<T> {
-    const requestId = options.requestId ?? generateRequestId('http');
+    const startTime = Date.now();
+    const methodName = options.method;
+    let success = false;
+    let statusCode: number | undefined;
+    let rateLimited = false;
+
+    const requestId =
+      options.requestId ??
+      (this.requestIdGenerator ? this.requestIdGenerator() : generateRequestId('http'));
 
     // One logical request may only run one retry sequence at a time. Two
     // concurrent callers reusing an id would otherwise double-submit the same
@@ -275,7 +345,9 @@ export class HttpClient {
     if (this.inFlightRequests.has(requestId)) {
       throw new RetryConflictError(requestId);
     }
-    try {
+    this.inFlightRequests.add(requestId);
+
+    const executeInternal = async (): Promise<T> => {
       const seeded: RequestOptions = {
         ...options,
         requestId,
@@ -289,7 +361,6 @@ export class HttpClient {
         if (cached && cached.expiresAt > Date.now()) return cached.promise as Promise<T>;
         if (cached) this.deduplicationCache.delete(key);
       }
-      this.inFlightRequests.add(requestId);
 
       const result = await this.executeDeduplication<T>(key, async () => {
         if (this.mode === 'sandbox') {
@@ -309,8 +380,48 @@ export class HttpClient {
         }
       });
       return result;
+    };
+
+    const executeWithQueue = (): Promise<T> => {
+      if (this.requestQueue) {
+        return this.requestQueue.enqueue(executeInternal);
+      }
+      return executeInternal();
+    };
+
+    const executeWithOffline = (): Promise<T> => {
+      if (this.offlineQueue) {
+        return this.offlineQueue.handleRequest(options.method, path, executeWithQueue);
+      }
+      return executeWithQueue();
+    };
+
+    try {
+      const result = await executeWithOffline();
+      success = true;
+      statusCode = 200;
+      return result;
+    } catch (error) {
+      if (error instanceof ApiError && error.statusCode !== undefined) {
+        statusCode = error.statusCode;
+        if (error.statusCode === 429) {
+          rateLimited = true;
+        }
+      }
+      throw error;
     } finally {
       this.inFlightRequests.delete(requestId);
+      if (this.metricsCollector.isEnabled()) {
+        const latency = Date.now() - startTime;
+        this.metricsCollector.record({
+          method: methodName,
+          path,
+          latency,
+          success,
+          statusCode,
+          rateLimited,
+        });
+      }
     }
   }
 
@@ -383,10 +494,10 @@ export class HttpClient {
     const headers = { ...this.defaultHeaders, ...options.headers };
 
     let lastError: Error | null = null;
-    const attempts = finalOptions.retries ?? this.retryAttempts;
+    const attempts = options.retries ?? this.retryAttempts;
     const canRetry = isRequestIdempotent({
-      method: finalOptions.method,
-      isIdempotent: finalOptions.isIdempotent,
+      method: options.method,
+      isIdempotent: options.isIdempotent,
       headers,
     });
 
@@ -399,6 +510,7 @@ export class HttpClient {
           body: sanitize(options.body),
           headers: sanitize(headers),
           attempt: attempt + 1,
+          requestId: options.requestId,
         });
         const response = await fetch(url, {
           method: options.method,
@@ -414,6 +526,7 @@ export class HttpClient {
           status: response.status,
           elapsedMs: Date.now() - startedAt,
           attempt: attempt + 1,
+          requestId: options.requestId,
         });
 
         if (!response.ok) {
@@ -435,7 +548,8 @@ export class HttpClient {
             error.error || 'Request failed',
             response.status,
             error.code,
-            retryAfter
+            retryAfter,
+            options.requestId
           );
         }
 
@@ -444,6 +558,9 @@ export class HttpClient {
         return await this.interceptors.executeResponseInterceptors(data);
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));
+        if (lastError instanceof DorisioError && !lastError.requestId && options.requestId) {
+          lastError.requestId = options.requestId;
+        }
         await this.interceptors.executeErrorInterceptors(lastError);
 
         // Don't retry requests the caller cancelled (superseded hook
@@ -488,15 +605,6 @@ export class HttpClient {
           error.statusCode >= 400 &&
           error.statusCode < 500
         ) {
-          throw error;
-        }
-
-        const idempotent = isRequestIdempotent({
-          method: options.method,
-          isIdempotent: options.isIdempotent,
-          headers: options.headers,
-        });
-        if (!idempotent) {
           throw error;
         }
 

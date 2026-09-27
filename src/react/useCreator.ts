@@ -30,8 +30,34 @@ interface UseCreatorActions {
 }
 
 /**
- * useCreator hook
- * Manages creator state and operations
+ * Hook for managing creator profiles, identity fetching, and profile updates.
+ *
+ * @returns State and action handlers for creator operations
+ *
+ * @example
+ * ```tsx
+ * import { useCreator } from 'dorisio-sdk/react';
+ *
+ * function CreatorProfileView({ creatorId }: { creatorId: string }) {
+ *   const { creator, loading, error, fetchCreator } = useCreator();
+ *
+ *   useEffect(() => {
+ *     fetchCreator(creatorId);
+ *   }, [creatorId, fetchCreator]);
+ *
+ *   if (loading) return <div>Loading creator...</div>;
+ *   if (error) return <div>Error: {error.message}</div>;
+ *   if (!creator) return null;
+ *
+ *   return (
+ *     <div>
+ *       <h1>{creator.name}</h1>
+ *       <p>{creator.bio}</p>
+ *       {creator.verified && <span>Verified</span>}
+ *     </div>
+ *   );
+ * }
+ * ```
  */
 export function useCreator(): UseCreatorState & UseCreatorActions {
   const { client, setError: setParentError } = useDorisio();

@@ -41,9 +41,36 @@ export interface UseCreateTipActions {
 }
 
 /**
- * useCreateTip
+ * Hook for orchestrating the complete tip payment flow (create, build, submit, confirm).
  *
- * Manages the tip creation workflow including Stellar transaction building and submission.
+ * @returns State and action handlers for the tipping lifecycle
+ *
+ * @example
+ * ```tsx
+ * import { useCreateTip } from 'dorisio-sdk/react';
+ *
+ * function TipButton({ creatorId }: { creatorId: string }) {
+ *   const { step, loading, error, createTip, reset } = useCreateTip();
+ *
+ *   const handleTip = async () => {
+ *     try {
+ *       const tip = await createTip({ creatorId, amount: 25, message: 'Thanks!' });
+ *       console.log('Tip created:', tip.id);
+ *     } catch (err) {
+ *       console.error('Tip failed:', err);
+ *     }
+ *   };
+ *
+ *   return (
+ *     <div>
+ *       <button disabled={loading} onClick={handleTip}>
+ *         {loading ? `Processing (${step})...` : 'Tip $25'}
+ *       </button>
+ *       {error && <p className="error">{error}</p>}
+ *     </div>
+ *   );
+ * }
+ * ```
  */
 export function useCreateTip(): UseCreateTipState & UseCreateTipActions {
   const { client, setError, setIsLoading } = useDorisio();

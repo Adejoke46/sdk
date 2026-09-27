@@ -162,7 +162,7 @@ describe('HttpClient concurrent request isolation (#43)', () => {
     const seen: string[] = [];
     const fetchMock = vi.fn().mockImplementation(async (_url: string, init?: RequestInit) => {
       const headers = init?.headers as Record<string, string>;
-      seen.push(headers['X-Request-Id']);
+      seen.push(headers['X-Request-Id'] ?? '');
       return { ok: true, json: async () => ({ ok: true }) };
     });
     globalThis.fetch = fetchMock as unknown as typeof fetch;
@@ -186,11 +186,11 @@ describe('HttpClient concurrent request isolation (#43)', () => {
     const fetchMock = vi
       .fn()
       .mockImplementationOnce(async (_url: string, init?: RequestInit) => {
-        seen.push(headersOf(init)['X-Request-Id']);
+        seen.push(headersOf(init)['X-Request-Id'] ?? '');
         return { ok: false, status: 500, json: async () => ({ error: 'x' }) };
       })
       .mockImplementationOnce(async (_url: string, init?: RequestInit) => {
-        seen.push(headersOf(init)['X-Request-Id']);
+        seen.push(headersOf(init)['X-Request-Id'] ?? '');
         return { ok: true, json: async () => ({ ok: true }) };
       });
     globalThis.fetch = fetchMock as unknown as typeof fetch;
@@ -256,7 +256,7 @@ describe('HttpClient concurrent request isolation (#43)', () => {
     vi.useFakeTimers();
     const calls = new Map<string, number>();
     const fetchMock = vi.fn().mockImplementation(async (_url: string, init?: RequestInit) => {
-      const id = (init?.headers as Record<string, string>)['X-Request-Id'];
+      const id = (init?.headers as Record<string, string>)['X-Request-Id'] ?? '';
       calls.set(id, (calls.get(id) ?? 0) + 1);
       return { ok: false, status: 500, json: async () => ({ error: 'x' }) };
     });

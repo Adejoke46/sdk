@@ -4,12 +4,14 @@
 export class DorisioError extends Error {
   public readonly statusCode?: number;
   public readonly code?: string;
+  public requestId?: string;
 
-  constructor(message: string, statusCode?: number, code?: string) {
+  constructor(message: string, statusCode?: number, code?: string, requestId?: string) {
     super(message);
     this.name = this.constructor.name;
     this.statusCode = statusCode;
     this.code = code;
+    this.requestId = requestId;
     Error.captureStackTrace(this, this.constructor);
   }
 }
@@ -18,8 +20,8 @@ export class DorisioError extends Error {
  * Authentication-related errors
  */
 export class AuthError extends DorisioError {
-  constructor(message: string, statusCode?: number, code?: string) {
-    super(message, statusCode, code);
+  constructor(message: string, statusCode?: number, code?: string, requestId?: string) {
+    super(message, statusCode, code, requestId);
     this.name = 'AuthError';
   }
 }
@@ -30,8 +32,14 @@ export class AuthError extends DorisioError {
 export class WalletVerificationError extends DorisioError {
   public readonly challenge?: string;
 
-  constructor(message: string, statusCode?: number, code?: string, challenge?: string) {
-    super(message, statusCode, code);
+  constructor(
+    message: string,
+    statusCode?: number,
+    code?: string,
+    challenge?: string,
+    requestId?: string
+  ) {
+    super(message, statusCode, code, requestId);
     this.name = 'WalletVerificationError';
     this.challenge = challenge;
   }
@@ -43,8 +51,14 @@ export class WalletVerificationError extends DorisioError {
 export class PaymentError extends DorisioError {
   public readonly transactionHash?: string;
 
-  constructor(message: string, statusCode?: number, code?: string, transactionHash?: string) {
-    super(message, statusCode, code);
+  constructor(
+    message: string,
+    statusCode?: number,
+    code?: string,
+    transactionHash?: string,
+    requestId?: string
+  ) {
+    super(message, statusCode, code, requestId);
     this.name = 'PaymentError';
     this.transactionHash = transactionHash;
   }
@@ -54,10 +68,10 @@ export class PaymentError extends DorisioError {
  * Validation errors for SDK inputs
  */
 export class ValidationError extends DorisioError {
-  public readonly details?: Record<string, any>;
+  public readonly details?: Record<string, unknown>;
 
-  constructor(message: string, details?: Record<string, any>) {
-    super(message, 400, 'VALIDATION_ERROR');
+  constructor(message: string, details?: Record<string, unknown>, requestId?: string) {
+    super(message, 400, 'VALIDATION_ERROR', requestId);
     this.name = 'ValidationError';
     this.details = details;
   }
@@ -69,8 +83,8 @@ export class ValidationError extends DorisioError {
 export class RateLimitError extends DorisioError {
   public readonly retryAfter?: number;
 
-  constructor(message: string, retryAfter?: number) {
-    super(message, 429, 'RATE_LIMITED');
+  constructor(message: string, retryAfter?: number, requestId?: string) {
+    super(message, 429, 'RATE_LIMITED', requestId);
     this.name = 'RateLimitError';
     this.retryAfter = retryAfter;
   }
@@ -80,8 +94,8 @@ export class RateLimitError extends DorisioError {
  * Network/timeout errors
  */
 export class TimeoutError extends DorisioError {
-  constructor(message: string = 'Request timeout', _timeoutMs?: number) {
-    super(message, 408, 'TIMEOUT');
+  constructor(message: string = 'Request timeout', _timeoutMs?: number, requestId?: string) {
+    super(message, 408, 'TIMEOUT', requestId);
     this.name = 'TimeoutError';
   }
 }
@@ -150,37 +164,43 @@ export type Middleware = (
 export class ApiError extends DorisioError {
   public readonly retryAfter?: number;
 
-  constructor(message: string, statusCode?: number, code?: string, retryAfter?: number) {
-    super(message, statusCode, code);
+  constructor(
+    message: string,
+    statusCode?: number,
+    code?: string,
+    retryAfter?: number,
+    requestId?: string
+  ) {
+    super(message, statusCode, code, requestId);
     this.name = 'ApiError';
     this.retryAfter = retryAfter;
   }
 }
 
 export class AuthenticationError extends DorisioError {
-  constructor(message: string = 'Authentication required') {
-    super(message, 401, 'UNAUTHORIZED');
+  constructor(message: string = 'Authentication required', requestId?: string) {
+    super(message, 401, 'UNAUTHORIZED', requestId);
     this.name = 'AuthenticationError';
   }
 }
 
 export class AuthorizationError extends DorisioError {
-  constructor(message: string = 'Insufficient permissions') {
-    super(message, 403, 'FORBIDDEN');
+  constructor(message: string = 'Insufficient permissions', requestId?: string) {
+    super(message, 403, 'FORBIDDEN', requestId);
     this.name = 'AuthorizationError';
   }
 }
 
 export class NotFoundError extends DorisioError {
-  constructor(message: string = 'Resource not found') {
-    super(message, 404, 'NOT_FOUND');
+  constructor(message: string = 'Resource not found', requestId?: string) {
+    super(message, 404, 'NOT_FOUND', requestId);
     this.name = 'NotFoundError';
   }
 }
 
 export class NetworkError extends DorisioError {
-  constructor(message: string = 'Network error') {
-    super(message, 0, 'NETWORK_ERROR');
+  constructor(message: string = 'Network error', requestId?: string) {
+    super(message, 0, 'NETWORK_ERROR', requestId);
     this.name = 'NetworkError';
   }
 }

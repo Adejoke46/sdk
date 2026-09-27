@@ -17,7 +17,8 @@ export type {
   ResponseInterceptor,
   ErrorInterceptor,
 } from './http/interceptors';
-export type { RequestOptions } from './http/http-client';
+export type { RequestOptions, HttpClientOptions, HttpClientMode } from './http/http-client';
+export { HttpClient } from './http/http-client';
 export { RequestQueue, type RequestQueueOptions } from './http/request-queue';
 export {
   OfflineQueue,
@@ -36,6 +37,38 @@ export {
   type MetricsCallback,
 } from './lib/metrics';
 
+// Re-export batch processor
+export {
+  BatchProcessor,
+  processBatch,
+  retryBatchFailures,
+  type BatchResult,
+  type BatchSuccess,
+  type BatchFailure,
+  type BatchProcessorOptions,
+} from './http/batch-processor';
+
+// Re-export logger
+export {
+  Logger,
+  createLogger,
+  type LogLevel,
+  type LogEntry,
+  type LogHandler,
+  type LoggerOptions,
+} from './lib/logger';
+
+// Re-export retry manager utilities
+export {
+  RetryManager,
+  RetryConflictError,
+  generateRequestId,
+  isRequestIdempotent,
+  type RetryConfig,
+  type RetryContext,
+  type RetryAttemptInfo,
+  type ExecuteWithRetryOptions,
+} from './http/retry-manager';
 
 // Re-export types
 export type { ApiResponse, PaginationMeta, PaginatedResponse } from './types/api';
@@ -52,6 +85,13 @@ export {
   WalletVerificationError,
   PaymentError,
   RateLimitError,
+} from './types/errors';
+export type {
+  ErrorHandler,
+  ErrorHandlerAction,
+  ErrorHandlerContext,
+  Middleware,
+  MiddlewareContext,
 } from './types/errors';
 
 // Re-export domain models
@@ -219,6 +259,11 @@ export {
   getCreators,
   getAllTransactionHistory,
   getAllWalletBalances,
+  getCreatorsBatch,
+  getWalletBalancesBatch,
+  createTipsBatch,
+  processBatchWithRetry,
+  retryBatch,
 } from './client/batch-operations';
 export type { VerificationStatus } from './client/verification';
 export type { SessionInfo } from './client/auth';
