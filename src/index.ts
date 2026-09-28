@@ -28,6 +28,7 @@ export type {
 export type { RequestOptions, HttpClientOptions, HttpClientMode } from './http/http-client';
 export { HttpClient } from './http/http-client';
 export { RequestQueue, type RequestQueueOptions } from './http/request-queue';
+export { RequestSigner, type RequestSignerOptions } from './http/request-signer';
 export { ConnectionPool, type ConnectionPoolOptions, type ConnectionPoolStats } from './http/connection-pool';
 export {
   OfflineQueue,
