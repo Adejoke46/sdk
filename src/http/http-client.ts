@@ -13,6 +13,8 @@ import { MockRouter, type SandboxHistoryEntry } from '../sandbox/mock-router';
 import { RequestQueue } from './request-queue';
 import { OfflineQueue } from './offline-queue';
 import { MetricsCollector, type MetricsSummary, type MetricsCallback } from '../lib/metrics';
+import { ThrottleManager } from './throttle-manager';
+import { HookManager, type HookContext, type ResponseContext } from '../lib/hooks';
 
 export type HttpClientMode = 'live' | 'sandbox' | 'production';
 
@@ -73,6 +75,27 @@ export interface HttpClientOptions {
   enableOfflineQueue?: boolean;
   enableMetrics?: boolean;
   metricsCallback?: MetricsCallback;
+  /** Enable request throttling */
+  enableThrottling?: boolean;
+  /** Max requests per throttling window */
+  throttleMaxRequests?: number;
+  /** Throttling window in ms */
+  throttleWindowMs?: number;
+  /** Hook manager for request/response lifecycle hooks */
+  hookManager?: HookManager;
+  /** Proxy configuration */
+  proxy?: ProxyConfig;
+}
+
+export interface ProxyConfig {
+  /** Proxy URL (e.g. 'http://proxy:8080') */
+  url: string;
+  /** Proxy auth username */
+  username?: string;
+  /** Proxy auth password */
+  password?: string;
+  /** Whether to reject unauthorized SSL certificates */
+  rejectUnauthorized?: boolean;
 }
 
 function normalizeMode(mode?: HttpClientMode): 'live' | 'sandbox' {
@@ -168,6 +191,9 @@ export class HttpClient {
   private requestQueue?: RequestQueue;
   private offlineQueue?: OfflineQueue;
   private metricsCollector: MetricsCollector;
+  private throttleManager?: ThrottleManager;
+  private hookManager?: HookManager;
+  private proxy?: ProxyConfig;
 
   constructor(baseUrl: string, options?: HttpClientOptions) {
     this.baseUrl = baseUrl.replace(/\/$/, '');
@@ -208,6 +234,16 @@ export class HttpClient {
       enabled: options?.enableMetrics ?? false,
       callback: options?.metricsCallback,
     });
+
+    if (options?.enableThrottling) {
+      this.throttleManager = new ThrottleManager({
+        maxRequests: options.throttleMaxRequests,
+        windowMs: options.throttleWindowMs,
+      });
+    }
+
+    this.hookManager = options?.hookManager;
+    this.proxy = options?.proxy;
   }
 
   /**
@@ -337,12 +373,36 @@ export class HttpClient {
       this.inFlightRequests.add(requestId);
 
       try {
+        // Throttle before making request
+        if (this.throttleManager) {
+          await this.throttleManager.acquire(path);
+        }
+
+        // Execute beforeRequest hooks
+        let hookCtx: HookContext = {
+          method: options.method,
+          path,
+          body: options.body,
+          headers: options.headers,
+          requestId,
+          state: {},
+        };
+        if (this.hookManager) {
+          hookCtx = await this.hookManager.executeBeforeRequest(hookCtx);
+          options = { ...options, body: hookCtx.body as Record<string, unknown>, headers: hookCtx.headers };
+        }
+
         const seeded: RequestOptions = {
           ...options,
           requestId,
           headers: withRequestIdHeader(options.headers, requestId),
         };
         const finalOptions = await this.interceptors.executeRequestInterceptors(seeded);
+
+        // Execute afterRequest hooks
+        if (this.hookManager) {
+          await this.hookManager.executeAfterRequest(hookCtx);
+        }
 
         const key = `${finalOptions.method}:${path}:${stableSerialize(finalOptions.body ?? null)}`;
         if (this.deduplicateRequests) {
@@ -472,12 +532,6 @@ export class HttpClient {
     return this.refreshPromise;
   }
 
-  private log(message: string, data?: unknown): void {
-    if (this.debug) {
-      this.logger(message, data);
-    }
-  }
-
   /**
    * Retry loop for a single attempt to reach the API.
    *
@@ -489,6 +543,30 @@ export class HttpClient {
   private async sendWithRetries<T>(path: string, options: RequestOptions): Promise<T> {
     const url = `${this.baseUrl}${path}`;
     const headers = { ...this.defaultHeaders, ...options.headers };
+
+    // Apply proxy configuration if set
+    const fetchOptions: RequestInit = {
+      method: options.method,
+      headers,
+      body: options.body ? this.serializer.serialize(options.body) : undefined,
+      signal: options.signal
+        ? AbortSignal.any([options.signal, AbortSignal.timeout(options.timeout ?? this.timeout)])
+        : AbortSignal.timeout(options.timeout ?? this.timeout),
+    };
+
+    // If proxy is configured, try to use undici ProxyAgent (Node.js only)
+    if (this.proxy?.url && typeof globalThis.process !== 'undefined') {
+      try {
+        // Dynamic import to avoid bundling undici in browser builds
+        const undici = await (Function('return import("undici")')() as Promise<typeof import('undici')>);
+        (fetchOptions as Record<string, unknown>).dispatcher = new undici.ProxyAgent({
+          uri: this.proxy.url,
+          requestTls: { rejectUnauthorized: this.proxy.rejectUnauthorized ?? true },
+        });
+      } catch {
+        // undici not available, fall through to direct fetch
+      }
+    }
 
     let lastError: Error | null = null;
     const attempts = options.retries ?? this.retryAttempts;
@@ -510,14 +588,7 @@ export class HttpClient {
           headers: sanitize(headers),
           attempt: attempt + 1,
         });
-        const response = await fetch(url, {
-          method: options.method,
-          headers,
-          body: options.body ? this.serializer.serialize(options.body) : undefined,
-          signal: options.signal
-            ? AbortSignal.any([options.signal, AbortSignal.timeout(options.timeout ?? this.timeout)])
-            : AbortSignal.timeout(options.timeout ?? this.timeout),
-        });
+        const response = await fetch(url, fetchOptions);
         options.onResponse?.(response);
         this.onResponse?.(response);
         this.log('[DORISIO] response', {
@@ -650,10 +721,6 @@ export class HttpClient {
     throw lastError || new Error('Request failed after retries');
   }
 
-  private log(message: string, data?: unknown): void {
-    if (this.debug) this.logger(message, data);
-  }
-
   /**
    * Get performance metrics summary
    */
@@ -680,6 +747,41 @@ export class HttpClient {
    */
   getOfflineQueue(): OfflineQueue | undefined {
     return this.offlineQueue;
+  }
+
+  /**
+   * Get throttle manager instance if enabled
+   */
+  getThrottleManager(): ThrottleManager | undefined {
+    return this.throttleManager;
+  }
+
+  /**
+   * Get hook manager instance if set
+   */
+  getHookManager(): HookManager | undefined {
+    return this.hookManager;
+  }
+
+  /**
+   * Set hook manager
+   */
+  setHookManager(manager: HookManager): void {
+    this.hookManager = manager;
+  }
+
+  /**
+   * Set proxy configuration
+   */
+  setProxy(proxy: ProxyConfig): void {
+    this.proxy = proxy;
+  }
+
+  /**
+   * Get proxy configuration
+   */
+  getProxy(): ProxyConfig | undefined {
+    return this.proxy;
   }
 
   /**
