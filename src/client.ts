@@ -6,7 +6,7 @@
  * Supports sandbox/mock mode for offline testing without network calls.
  */
 
-import { HttpClient, RequestOptions, type HttpClientMode } from './http/http-client';
+import { HttpClient, RequestOptions, type HttpClientMode, type ProxyConfig } from './http/http-client';
 import { FailoverManager, type EndpointConfig } from './http/failover-manager';
 import { getConfig } from './config';
 import { ApiResponse } from './types/api';
@@ -50,6 +50,9 @@ import {
   type DeprecationWarning,
   type DeprecatedEndpointConfig,
 } from './http/api-version-handler';
+import type { ErrorReporter } from './lib/error-reporter';
+import { HookManager, type HookRegistration } from './lib/hooks';
+import { ThrottleManager } from './http/throttle-manager';
 
 export type ClientMode = 'sandbox' | 'live' | 'production';
 
@@ -100,6 +103,16 @@ export interface ClientConfig {
   enableMetrics?: boolean;
   /** Optional callback invoked whenever a request metric is recorded */
   metricsCallback?: MetricsCallback;
+  /** Error reporter instance for automatic error reporting */
+  errorReporter?: ErrorReporter;
+  /** Enable request throttling */
+  enableThrottling?: boolean;
+  /** Max requests per throttling window */
+  throttleMaxRequests?: number;
+  /** Throttling window in ms */
+  throttleWindowMs?: number;
+  /** Proxy configuration for corporate environments */
+  proxy?: ProxyConfig;
 }
 
 function normalizeClientMode(mode?: ClientMode): 'live' | 'sandbox' {
@@ -115,6 +128,8 @@ export class DorisioClient {
   private errorHandler?: ErrorHandler;
   private middleware: Middleware[] = [];
   private apiVersionHandler: ApiVersionHandler;
+  private errorReporter?: ErrorReporter;
+  private hookManager: HookManager;
 
   constructor(config: ClientConfig) {
     const mode = normalizeClientMode(config.mode);
@@ -145,11 +160,18 @@ export class DorisioClient {
       enableOfflineQueue: config.enableOfflineQueue,
       enableMetrics: config.enableMetrics,
       metricsCallback: config.metricsCallback,
+      errorReporter: config.errorReporter,
+      enableThrottling: config.enableThrottling,
+      throttleMaxRequests: config.throttleMaxRequests,
+      throttleWindowMs: config.throttleWindowMs,
+      proxy: config.proxy,
     };
 
     this.token = config.token;
     this.mode = mode;
     this.errorHandler = config.errorHandler;
+    this.errorReporter = config.errorReporter;
+    this.hookManager = new HookManager();
 
     this.apiVersionHandler =
       config.apiVersionHandler ||
@@ -181,6 +203,11 @@ export class DorisioClient {
       enableOfflineQueue: config.enableOfflineQueue,
       enableMetrics: config.enableMetrics,
       metricsCallback: config.metricsCallback,
+      enableThrottling: config.enableThrottling,
+      throttleMaxRequests: config.throttleMaxRequests,
+      throttleWindowMs: config.throttleWindowMs,
+      hookManager: this.hookManager,
+      proxy: config.proxy,
       onResponse: (response: Response) => {
         this.apiVersionHandler.checkResponseHeaders(response.headers);
       },
@@ -478,6 +505,63 @@ export class DorisioClient {
    */
   use(middleware: Middleware): void {
     this.middleware.push(middleware);
+  }
+
+  /**
+   * Register a lifecycle hook for deep request/response customization
+   */
+  registerHook(hook: HookRegistration): void {
+    this.hookManager.register(hook);
+  }
+
+  /**
+   * Unregister a lifecycle hook by name
+   */
+  unregisterHook(name: string): void {
+    this.hookManager.unregister(name);
+  }
+
+  /**
+   * Get the hook manager instance
+   */
+  getHookManager(): HookManager {
+    return this.hookManager;
+  }
+
+  /**
+   * Set error reporter for automatic error reporting
+   */
+  setErrorReporter(reporter: ErrorReporter): void {
+    this.errorReporter = reporter;
+  }
+
+  /**
+   * Get error reporter instance
+   */
+  getErrorReporter(): ErrorReporter | undefined {
+    return this.errorReporter;
+  }
+
+  /**
+   * Get throttle manager instance if enabled
+   */
+  getThrottleManager(): ThrottleManager | undefined {
+    return this.httpClient.getThrottleManager();
+  }
+
+  /**
+   * Set proxy configuration
+   */
+  setProxy(proxy: ProxyConfig): void {
+    this.config.proxy = proxy;
+    this.httpClient.setProxy(proxy);
+  }
+
+  /**
+   * Get current proxy configuration
+   */
+  getProxy(): ProxyConfig | undefined {
+    return this.httpClient.getProxy();
   }
 
   /**
