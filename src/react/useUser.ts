@@ -25,8 +25,33 @@ interface UseUserActions {
 }
 
 /**
- * useUser hook
- * Manages user state and operations
+ * Hook for managing authenticated user profile, fan profile fetching, and profile updates.
+ *
+ * @returns State and action handlers for user operations
+ *
+ * @example
+ * ```tsx
+ * import { useUser } from 'dorisio-sdk/react';
+ *
+ * function UserProfileCard() {
+ *   const { user, loading, error, fetchCurrentUser } = useUser();
+ *
+ *   useEffect(() => {
+ *     fetchCurrentUser();
+ *   }, [fetchCurrentUser]);
+ *
+ *   if (loading) return <p>Loading profile...</p>;
+ *   if (error) return <p className="error">{error.message}</p>;
+ *   if (!user) return <p>Please log in.</p>;
+ *
+ *   return (
+ *     <div>
+ *       <h3>{user.name}</h3>
+ *       <p>{user.email}</p>
+ *     </div>
+ *   );
+ * }
+ * ```
  */
 export function useUser(): UseUserState & UseUserActions {
   const { client, setError: setParentError } = useDorisio();

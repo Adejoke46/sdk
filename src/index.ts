@@ -42,14 +42,24 @@ export {
 } from './graphql/queries';
 
 // Re-export HTTP interceptors (public API for custom middleware)
+export {
+  ApiVersionHandler,
+  type ApiVersionHandlerOptions,
+  type DeprecationWarning,
+  type DeprecatedEndpointConfig,
+  type RequestMigrationContext,
+  type VersionMigration,
+} from './http/api-version-handler';
 export { InterceptorManager } from './http/interceptors';
 export type {
   RequestInterceptor,
   ResponseInterceptor,
   ErrorInterceptor,
 } from './http/interceptors';
-export type { RequestOptions } from './http/http-client';
+export type { RequestOptions, HttpClientOptions, HttpClientMode } from './http/http-client';
+export { HttpClient } from './http/http-client';
 export { RequestQueue, type RequestQueueOptions } from './http/request-queue';
+export { ConnectionPool, type ConnectionPoolOptions, type ConnectionPoolStats } from './http/connection-pool';
 export {
   OfflineQueue,
   type OfflineQueueOptions,
@@ -57,6 +67,15 @@ export {
   type OfflineEventListener,
   type QueueProcessedResult,
 } from './http/offline-queue';
+export {
+  FailoverManager,
+  type EndpointConfig,
+  type FailoverManagerOptions,
+} from './http/failover-manager';
+export {
+  JsonSerializer,
+  type Serializer,
+} from './http/serializer';
 export {
   MetricsCollector,
   type MetricsCollectorOptions,
@@ -66,6 +85,48 @@ export {
   type CallbackMetrics,
   type MetricsCallback,
 } from './lib/metrics';
+
+// Re-export error reporter
+export {
+  ConsoleErrorReporter,
+  NoopErrorReporter,
+  createErrorReporter,
+  type ErrorReporter,
+  type ErrorReporterOptions,
+  type ErrorReportEvent,
+  type UserContext,
+} from './lib/error-reporter';
+
+// Re-export hook system
+export {
+  HookManager,
+  type HookContext,
+  type ResponseContext,
+  type BeforeRequestHook,
+  type AfterRequestHook,
+  type BeforeResponseHook,
+  type AfterResponseHook,
+  type HookRegistration,
+} from './lib/hooks';
+
+// Re-export throttle manager
+export {
+  ThrottleManager,
+  type ThrottleManagerOptions,
+  type EndpointThrottleConfig,
+} from './http/throttle-manager';
+
+// Re-export proxy config type
+export type { ProxyConfig } from './http/http-client';
+
+// Re-export Sentry integration
+export {
+  SentryErrorReporter,
+  HttpSentryTransport,
+  createSentryReporter,
+  type SentryTransport,
+  type SentryEvent,
+} from './integrations/sentry';
 
 
 // Re-export types
@@ -83,6 +144,13 @@ export {
   WalletVerificationError,
   PaymentError,
   RateLimitError,
+} from './types/errors';
+export type {
+  ErrorHandler,
+  ErrorHandlerAction,
+  ErrorHandlerContext,
+  Middleware,
+  MiddlewareContext,
 } from './types/errors';
 
 // Re-export domain models
@@ -250,6 +318,11 @@ export {
   getCreators,
   getAllTransactionHistory,
   getAllWalletBalances,
+  getCreatorsBatch,
+  getWalletBalancesBatch,
+  createTipsBatch,
+  processBatchWithRetry,
+  retryBatch,
 } from './client/batch-operations';
 export type { VerificationStatus } from './client/verification';
 export type { SessionInfo } from './client/auth';

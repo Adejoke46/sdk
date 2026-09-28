@@ -3,7 +3,7 @@
  *
  * Base HTTP client for making requests to the backend API.
  * Handles request/response formatting, retries, error handling,
- * and sandbox/mock mode for offline testing.
+ * request fingerprinting, custom headers, and sandbox/mock mode for offline testing.
  */
 
 import { ApiError, DorisioError, ErrorHandler, ErrorHandlerContext } from '../types';
@@ -12,7 +12,9 @@ import { generateRequestId, isRequestIdempotent, RetryConflictError } from './re
 import { MockRouter, type SandboxHistoryEntry } from '../sandbox/mock-router';
 import { RequestQueue } from './request-queue';
 import { OfflineQueue } from './offline-queue';
-import { MetricsCollector, type MetricsCallback, type MetricsSummary } from '../lib/metrics';
+import { MetricsCollector, type MetricsSummary, type MetricsCallback } from '../lib/metrics';
+import { ThrottleManager } from './throttle-manager';
+import { HookManager, type HookContext, type ResponseContext } from '../lib/hooks';
 
 export type HttpClientMode = 'live' | 'sandbox' | 'production';
 
@@ -41,7 +43,7 @@ export interface RequestOptions {
    */
   requestId?: string;
   /**
-   * Method name for metrics tracking.
+   * Optional name of the calling SDK method for logging / diagnostics.
    */
   methodName?: string;
 }
@@ -66,16 +68,49 @@ export interface HttpClientOptions {
   deduplicationWindow?: number;
   /** Custom error handler for error recovery strategies */
   errorHandler?: ErrorHandler;
-  /** Enable request queue with concurrency control and automatic 429 backoff. */
+  /** Custom request ID generator function */
+  requestIdGenerator?: () => string;
+  /**
+   * Enable request queue with concurrency control and automatic 429 backoff.
+   */
   enableRequestQueue?: boolean;
-  /** Maximum concurrent requests in flight when request queue is enabled (default: 5). */
+  /**
+   * Maximum concurrent requests in flight when request queue is enabled (default: 5).
+   */
   maxConcurrentRequests?: number;
-  /** Enable offline mutation queue. */
+  /**
+   * Enable offline mutation queue.
+   */
   enableOfflineQueue?: boolean;
-  /** Enable performance metrics collection. */
+  /**
+   * Enable performance metrics collection.
+   */
   enableMetrics?: boolean;
-  /** Optional callback invoked whenever a request metric is recorded. */
+  /**
+   * Optional callback invoked whenever a request metric is recorded.
+   */
   metricsCallback?: MetricsCallback;
+  /** Enable request throttling */
+  enableThrottling?: boolean;
+  /** Max requests per throttling window */
+  throttleMaxRequests?: number;
+  /** Throttling window in ms */
+  throttleWindowMs?: number;
+  /** Hook manager for request/response lifecycle hooks */
+  hookManager?: HookManager;
+  /** Proxy configuration */
+  proxy?: ProxyConfig;
+}
+
+export interface ProxyConfig {
+  /** Proxy URL (e.g. 'http://proxy:8080') */
+  url: string;
+  /** Proxy auth username */
+  username?: string;
+  /** Proxy auth password */
+  password?: string;
+  /** Whether to reject unauthorized SSL certificates */
+  rejectUnauthorized?: boolean;
 }
 
 function normalizeMode(mode?: HttpClientMode): 'live' | 'sandbox' {
@@ -102,7 +137,7 @@ function hasHeader(headers: Record<string, string>, name: string): boolean {
 
 /**
  * Attach the logical request id to the outgoing headers so retries and server
- * logs can be correlated. Callers who set their own `X-Request-Id` win.
+ * logs can be correlated. Callers who set their own `X-Request-Id` or `X-Request-ID` win.
  */
 function withRequestIdHeader(
   headers: Record<string, string> | undefined,
@@ -167,9 +202,13 @@ export class HttpClient {
   private deduplicationWindow: number;
   private deduplicationCache = new Map<string, CachedRequest>();
   private errorHandler?: ErrorHandler;
+  private requestIdGenerator?: () => string;
   private requestQueue?: RequestQueue;
   private offlineQueue?: OfflineQueue;
   private metricsCollector: MetricsCollector;
+  private throttleManager?: ThrottleManager;
+  private hookManager?: HookManager;
+  private proxy?: ProxyConfig;
 
   constructor(baseUrl: string, options?: HttpClientOptions) {
     this.baseUrl = baseUrl.replace(/\/$/, '');
@@ -191,8 +230,16 @@ export class HttpClient {
     this.deduplicateRequests = options?.deduplicateRequests ?? false;
     this.deduplicationWindow = options?.deduplicationWindow ?? 1000;
     this.errorHandler = options?.errorHandler;
-    if (this.deduplicationWindow < 0) {
-      throw new Error('deduplicationWindow must be greater than or equal to zero');
+    this.requestIdGenerator = options?.requestIdGenerator;
+
+    if (options?.enableRequestQueue) {
+      this.requestQueue = new RequestQueue({
+        maxConcurrentRequests: options.maxConcurrentRequests,
+      });
+    }
+
+    if (options?.enableOfflineQueue) {
+      this.offlineQueue = new OfflineQueue();
     }
 
     this.metricsCollector = new MetricsCollector({
@@ -200,14 +247,47 @@ export class HttpClient {
       callback: options?.metricsCallback,
     });
 
+    if (this.deduplicationWindow < 0) {
+      throw new Error('deduplicationWindow must be greater than or equal to zero');
+    }
+
     if (options?.enableRequestQueue) {
       this.requestQueue = new RequestQueue({
-        maxConcurrentRequests: options?.maxConcurrentRequests ?? 5,
+        maxConcurrentRequests: options.maxConcurrentRequests,
       });
     }
 
     if (options?.enableOfflineQueue) {
       this.offlineQueue = new OfflineQueue();
+    }
+
+    this.metricsCollector = new MetricsCollector({
+      enabled: options?.enableMetrics ?? false,
+      callback: options?.metricsCallback,
+    });
+
+    if (options?.enableThrottling) {
+      this.throttleManager = new ThrottleManager({
+        maxRequests: options.throttleMaxRequests,
+        windowMs: options.throttleWindowMs,
+      });
+    }
+
+    this.hookManager = options?.hookManager;
+    this.proxy = options?.proxy;
+  }
+
+  /**
+   * Emit sanitized request/response diagnostics through the configured logger.
+   */
+  private log(message: string, data?: unknown): void {
+    if (!this.debug) return;
+    this.logger(message, data);
+  }
+
+  private log(message: string, data?: unknown): void {
+    if (this.debug) {
+      this.logger(message, data);
     }
   }
 
@@ -233,6 +313,13 @@ export class HttpClient {
    */
   setErrorHandler(handler: ErrorHandler): void {
     this.errorHandler = handler;
+  }
+
+  /**
+   * Set custom request ID generator
+   */
+  setRequestIdGenerator(generator: () => string): void {
+    this.requestIdGenerator = generator;
   }
 
   /**
@@ -275,6 +362,10 @@ export class HttpClient {
     return [...this.inFlightRequests];
   }
 
+  getConnectionPoolStats() {
+    return this.connectionPool.stats();
+  }
+
   configureSandbox(options: {
     seed?: number;
     latency?: number;
@@ -300,7 +391,15 @@ export class HttpClient {
    * records performance metrics, and supports 401 token refresh.
    */
   async request<T>(path: string, options: RequestOptions): Promise<T> {
-    const requestId = options.requestId ?? generateRequestId('http');
+    const startTime = Date.now();
+    const methodName = options.method;
+    let success = false;
+    let statusCode: number | undefined;
+    let rateLimited = false;
+
+    const requestId =
+      options.requestId ??
+      (this.requestIdGenerator ? this.requestIdGenerator() : generateRequestId('http'));
 
     // One logical request may only run one retry sequence at a time. Two
     // concurrent callers reusing an id would otherwise double-submit the same
@@ -310,12 +409,6 @@ export class HttpClient {
       throw new RetryConflictError(requestId);
     }
     this.inFlightRequests.add(requestId);
-
-    const startTime = Date.now();
-    const methodName = options.methodName || options.method;
-    let success = false;
-    let statusCode: number | undefined;
-    let rateLimited = false;
 
     const executeInternal = async (): Promise<T> => {
       const seeded: RequestOptions = {
@@ -332,23 +425,86 @@ export class HttpClient {
         if (cached) this.deduplicationCache.delete(key);
       }
 
-      const result = await this.executeDeduplication<T>(key, async () => {
-        if (this.mode === 'sandbox') {
-          const mocked = await this.mockRouter.handle(finalOptions.method, path, finalOptions.body);
-          return (await this.interceptors.executeResponseInterceptors(mocked)) as T;
+      try {
+        // Throttle before making request
+        if (this.throttleManager) {
+          await this.throttleManager.acquire(path);
         }
-        try {
-          return await this.sendWithRetries<T>(path, finalOptions);
-        } catch (error) {
-          if (!this.canRecoverFrom(error, path, finalOptions)) throw error;
-          try {
-            await this.refreshSessionOnce();
-          } catch {
-            throw error;
+
+        // Execute beforeRequest hooks
+        let hookCtx: HookContext = {
+          method: options.method,
+          path,
+          body: options.body,
+          headers: options.headers,
+          requestId,
+          state: {},
+        };
+        if (this.hookManager) {
+          hookCtx = await this.hookManager.executeBeforeRequest(hookCtx);
+          options = { ...options, body: hookCtx.body as Record<string, unknown>, headers: hookCtx.headers };
+        }
+
+        const seeded: RequestOptions = {
+          ...options,
+          requestId,
+          headers: withRequestIdHeader(options.headers, requestId),
+        };
+        const finalOptions = await this.interceptors.executeRequestInterceptors(seeded);
+
+        // Execute afterRequest hooks
+        if (this.hookManager) {
+          await this.hookManager.executeAfterRequest(hookCtx);
+        }
+
+        const key = `${finalOptions.method}:${path}:${stableSerialize(finalOptions.body ?? null)}`;
+        if (this.deduplicateRequests) {
+          const cached = this.deduplicationCache.get(key);
+          if (cached && cached.expiresAt > Date.now()) return cached.promise as Promise<T>;
+          if (cached) this.deduplicationCache.delete(key);
+        }
+
+        const result = await this.executeDeduplication<T>(key, async () => {
+          if (this.mode === 'sandbox') {
+            const mocked = await this.mockRouter.handle(finalOptions.method, path, finalOptions.body);
+            return (await this.interceptors.executeResponseInterceptors(mocked)) as T;
           }
-          return await this.sendWithRetries<T>(path, finalOptions);
-        }
-      });
+          try {
+            return await this.sendWithRetries<T>(path, finalOptions);
+          } catch (error) {
+            if (!this.canRecoverFrom(error, path, finalOptions)) throw error;
+            try {
+              await this.refreshSessionOnce();
+            } catch {
+              throw error;
+            }
+            return await this.sendWithRetries<T>(path, finalOptions);
+          }
+        });
+        return result;
+      } finally {
+        this.inFlightRequests.delete(requestId);
+      }
+    };
+
+    const executeWithQueue = (): Promise<T> => {
+      if (this.requestQueue) {
+        return this.requestQueue.enqueue(executeInternal);
+      }
+      return executeInternal();
+    };
+
+    const executeWithOffline = (): Promise<T> => {
+      if (this.offlineQueue) {
+        return this.offlineQueue.handleRequest(options.method, path, executeWithQueue);
+      }
+      return executeWithQueue();
+    };
+
+    try {
+      const result = await executeWithOffline();
+      success = true;
+      statusCode = 200;
       return result;
     };
 
@@ -463,6 +619,30 @@ export class HttpClient {
     const url = `${this.baseUrl}${path}`;
     const headers = { ...this.defaultHeaders, ...options.headers };
 
+    // Apply proxy configuration if set
+    const fetchOptions: RequestInit = {
+      method: options.method,
+      headers,
+      body: options.body ? this.serializer.serialize(options.body) : undefined,
+      signal: options.signal
+        ? AbortSignal.any([options.signal, AbortSignal.timeout(options.timeout ?? this.timeout)])
+        : AbortSignal.timeout(options.timeout ?? this.timeout),
+    };
+
+    // If proxy is configured, try to use undici ProxyAgent (Node.js only)
+    if (this.proxy?.url && typeof globalThis.process !== 'undefined') {
+      try {
+        // Dynamic import to avoid bundling undici in browser builds
+        const undici = await (Function('return import("undici")')() as Promise<typeof import('undici')>);
+        (fetchOptions as Record<string, unknown>).dispatcher = new undici.ProxyAgent({
+          uri: this.proxy.url,
+          requestTls: { rejectUnauthorized: this.proxy.rejectUnauthorized ?? true },
+        });
+      } catch {
+        // undici not available, fall through to direct fetch
+      }
+    }
+
     let lastError: Error | null = null;
     const attempts = options.retries ?? this.retryAttempts;
     const canRetry = isRequestIdempotent({
@@ -472,33 +652,43 @@ export class HttpClient {
     });
 
     for (let attempt = 0; attempt < attempts; attempt++) {
+      let release: (() => void) | undefined;
       try {
+        release = await this.connectionPool.acquire(options.signal);
         const startedAt = Date.now();
-        this.log('[DORISIO] request', {
+        this.logger('[DORISIO] request', {
           method: options.method,
           path,
           body: sanitize(options.body),
           headers: sanitize(headers),
           attempt: attempt + 1,
+          requestId: options.requestId,
         });
-        const response = await fetch(url, {
-          method: options.method,
-          headers,
-          body: options.body ? JSON.stringify(options.body) : undefined,
-          signal: options.signal
-            ? AbortSignal.any([options.signal, AbortSignal.timeout(options.timeout ?? this.timeout)])
-            : AbortSignal.timeout(options.timeout ?? this.timeout),
-        });
+        const response = await fetch(url, fetchOptions);
+        options.onResponse?.(response);
+        this.onResponse?.(response);
         this.log('[DORISIO] response', {
           method: options.method,
           path,
           status: response.status,
           elapsedMs: Date.now() - startedAt,
           attempt: attempt + 1,
+          requestId: options.requestId,
         });
 
         if (!response.ok) {
-          const error = await response.json().catch(() => ({}));
+          let error: Record<string, unknown> = {};
+          try {
+            const errorText = await response.text();
+            error = errorText ? this.serializer.deserialize<Record<string, unknown>>(errorText) : {};
+          } catch {
+            // Fallback for mocks that only implement json()
+            try {
+              error = await (response as { json?: () => Promise<Record<string, unknown>> }).json?.() ?? {};
+            } catch {
+              // ignore
+            }
+          }
           const retryAfterHeader = response.headers?.get?.('Retry-After');
           let retryAfter: number | undefined;
           if (retryAfterHeader) {
@@ -513,23 +703,38 @@ export class HttpClient {
             }
           }
           throw new ApiError(
-            error.error || 'Request failed',
+            String(error.error) || 'Request failed',
             response.status,
             error.code,
-            retryAfter
+            retryAfter,
+            options.requestId
           );
         }
 
-        const data = (await response.json()) as T;
+        let data: T;
+        try {
+          const text = await response.text();
+          data = this.serializer.deserialize<T>(text);
+        } catch {
+          // Fallback for mocks that only implement json()
+          data = await (response as { json?: () => Promise<T> }).json?.() ?? (undefined as T);
+        }
 
         return await this.interceptors.executeResponseInterceptors(data);
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));
+        if (lastError instanceof DorisioError && !lastError.requestId && options.requestId) {
+          lastError.requestId = options.requestId;
+        }
         await this.interceptors.executeErrorInterceptors(lastError);
 
         // Don't retry requests the caller cancelled (superseded hook
         // requests) — retrying an aborted fetch just burns attempts.
-        if (options.signal?.aborted) {
+        if (
+          options.signal?.aborted ||
+          lastError.name === 'AbortError' ||
+          (lastError as { code?: number }).code === 20
+        ) {
           throw lastError;
         }
 
@@ -559,7 +764,7 @@ export class HttpClient {
             // action === 'throw' falls through to throw error
           } catch (handlerError) {
             // If error handler itself fails, log and continue with normal error handling
-            this.log('[DORISIO] error handler failed', { error: handlerError });
+            this.logger('[DORISIO] error handler failed', { error: handlerError });
           }
         }
 
@@ -572,15 +777,6 @@ export class HttpClient {
           throw error;
         }
 
-        const idempotent = isRequestIdempotent({
-          method: options.method,
-          isIdempotent: options.isIdempotent,
-          headers: options.headers,
-        });
-        if (!idempotent) {
-          throw error;
-        }
-
         // Never retry non-idempotent calls (avoids duplicate tips/charges)
         if (!canRetry) {
           throw lastError;
@@ -589,6 +785,8 @@ export class HttpClient {
         if (attempt < attempts - 1) {
           await new Promise((resolve) => setTimeout(resolve, Math.pow(2, attempt) * 1000));
         }
+      } finally {
+        release?.();
       }
     }
 
@@ -621,6 +819,41 @@ export class HttpClient {
    */
   getOfflineQueue(): OfflineQueue | undefined {
     return this.offlineQueue;
+  }
+
+  /**
+   * Get throttle manager instance if enabled
+   */
+  getThrottleManager(): ThrottleManager | undefined {
+    return this.throttleManager;
+  }
+
+  /**
+   * Get hook manager instance if set
+   */
+  getHookManager(): HookManager | undefined {
+    return this.hookManager;
+  }
+
+  /**
+   * Set hook manager
+   */
+  setHookManager(manager: HookManager): void {
+    this.hookManager = manager;
+  }
+
+  /**
+   * Set proxy configuration
+   */
+  setProxy(proxy: ProxyConfig): void {
+    this.proxy = proxy;
+  }
+
+  /**
+   * Get proxy configuration
+   */
+  getProxy(): ProxyConfig | undefined {
+    return this.proxy;
   }
 
   /**

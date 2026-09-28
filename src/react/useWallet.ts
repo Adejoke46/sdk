@@ -38,13 +38,36 @@ export interface UseWalletActions {
 }
 
 /**
- * useWallet
+ * Hook for managing user wallets, challenge-response verification with Stellar/Freighter,
+ * and fetching wallet balances.
  *
- * Manages wallet operations including challenge-response verification with Freighter.
+ * @returns State and action handlers for wallet management
  *
- * Error handling: see {@link runSafely} — actions reject with the original error,
- * report through the provider's `setError` without ever masking it, and always
- * clear loading state.
+ * @example
+ * ```tsx
+ * import { useWallet } from 'dorisio-sdk/react';
+ *
+ * function WalletManager() {
+ *   const { wallets, loading, error, listWallets, unlinkWallet } = useWallet();
+ *
+ *   useEffect(() => {
+ *     listWallets();
+ *   }, [listWallets]);
+ *
+ *   return (
+ *     <div>
+ *       {loading && <p>Loading wallets...</p>}
+ *       {error && <p className="error">{error}</p>}
+ *       {wallets.map((w) => (
+ *         <div key={w.id}>
+ *           <span>{w.publicKey}</span>
+ *           <button onClick={() => unlinkWallet(w.id)}>Unlink</button>
+ *         </div>
+ *       ))}
+ *     </div>
+ *   );
+ * }
+ * ```
  */
 export function useWallet(): UseWalletState & UseWalletActions {
   const { client, setError, setIsLoading } = useDorisio();

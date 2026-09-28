@@ -256,10 +256,8 @@ describe('HttpClient concurrent request isolation (#43)', () => {
     vi.useFakeTimers();
     const calls = new Map<string, number>();
     const fetchMock = vi.fn().mockImplementation(async (_url: string, init?: RequestInit) => {
-      const id = (init?.headers as Record<string, string>)['X-Request-Id'];
-      if (id) {
-        calls.set(id, (calls.get(id) ?? 0) + 1);
-      }
+      const id = (init?.headers as Record<string, string>)['X-Request-Id'] ?? '';
+      calls.set(id, (calls.get(id) ?? 0) + 1);
       return { ok: false, status: 500, json: async () => ({ error: 'x' }) };
     });
     globalThis.fetch = fetchMock as unknown as typeof fetch;
