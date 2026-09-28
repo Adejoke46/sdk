@@ -8,6 +8,7 @@
  */
 
 import { HttpClient, RequestOptions, type HttpClientMode } from './http/http-client';
+import { FailoverManager, type EndpointConfig } from './http/failover-manager';
 import { getConfig } from './config';
 import { ApiResponse } from './types/api';
 import {
@@ -118,6 +119,7 @@ export class DorisioClient {
   private mode: 'live' | 'sandbox';
   private errorHandler?: ErrorHandler;
   private middleware: Middleware[] = [];
+  private apiVersionHandler: ApiVersionHandler;
 
   constructor(config: ClientConfig) {
     const mode = normalizeClientMode(config.mode);
@@ -147,6 +149,19 @@ export class DorisioClient {
     this.mode = mode;
     this.errorHandler = config.errorHandler;
 
+    this.apiVersionHandler =
+      config.apiVersionHandler ||
+      new ApiVersionHandler({
+        currentVersion: config.apiVersion || 'v1',
+        supportedVersions: config.supportedApiVersions,
+        fallbackVersion: config.fallbackApiVersion,
+        autoMigrate: config.autoMigrateApiVersion ?? true,
+        deprecatedEndpoints: config.deprecatedEndpoints,
+        onVersionChange: config.onApiVersionChange,
+        onDeprecation: config.onApiDeprecation,
+        logger: config.logger,
+      });
+
     this.httpClient = new HttpClient(this.config.baseUrl, {
       timeout: this.config.timeout,
       retryAttempts: getConfig().retryAttempts,
@@ -169,6 +184,15 @@ export class DorisioClient {
 
     if (this.token) {
       this.httpClient.setHeader('Authorization', `Bearer ${this.token}`);
+    }
+
+    // Initialize failover manager if multiple endpoints provided
+    if (config.endpoints && config.endpoints.length > 0) {
+      const allEndpoints = [config.baseUrl, ...config.endpoints];
+      this.failoverManager = new FailoverManager({
+        endpoints: allEndpoints,
+        healthCheckInterval: config.healthCheckInterval,
+      });
     }
 
     this.bindMethods();
@@ -270,35 +294,56 @@ export class DorisioClient {
     body?: unknown,
     options?: Partial<RequestOptions>
   ): Promise<ApiResponse<T>> {
-    const requestBody = body;
-    const requestHeaders = options?.headers;
+    this.apiVersionHandler.checkEndpointDeprecation(path);
+
+    const initialHeaders = options?.headers ? { ...options.headers } : {};
+    const migrated = this.apiVersionHandler.migrateRequest({
+      method,
+      path,
+      body,
+      headers: initialHeaders,
+    });
+
+    const requestBody = migrated.body;
+    const requestHeaders = migrated.headers;
+    const requestPath = migrated.path;
+    const requestMethod = (migrated.method || method) as 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+
+    const mergedOptions: Partial<RequestOptions> = {
+      ...options,
+      headers: requestHeaders,
+      onResponse: (response: Response) => {
+        this.apiVersionHandler.checkResponseHeaders(response.headers, requestPath);
+        options?.onResponse?.(response);
+      },
+    };
 
     // Execute middleware chain for request transformation
     const executeMiddleware = async (index: number): Promise<ApiResponse<T>> => {
       if (index >= this.middleware.length) {
         // All middleware executed, make the actual request
-        return this.httpClient.request<ApiResponse<T>>(path, {
-          method,
+        return this.httpClient.request<ApiResponse<T>>(requestPath, {
+          method: requestMethod,
           body: requestBody as Record<string, unknown>,
           headers: requestHeaders,
-          ...options,
+          ...mergedOptions,
         });
       }
 
       const middleware = this.middleware[index];
       if (!middleware) {
-        return this.httpClient.request<ApiResponse<T>>(path, {
-          method,
+        return this.httpClient.request<ApiResponse<T>>(requestPath, {
+          method: requestMethod,
           body: requestBody as Record<string, unknown>,
           headers: requestHeaders,
-          ...options,
+          ...mergedOptions,
         });
       }
 
       const result = await middleware(
         {
-          method,
-          path,
+          method: requestMethod,
+          path: requestPath,
           body: requestBody,
           headers: requestHeaders,
           requestId: options?.requestId,
@@ -309,7 +354,61 @@ export class DorisioClient {
       return result as ApiResponse<T>;
     };
 
-    return executeMiddleware(0);
+    const res = await executeMiddleware(0);
+    return this.apiVersionHandler.migrateResponse(
+      res,
+      this.apiVersionHandler.getCurrentVersion(),
+      this.apiVersionHandler.getCurrentVersion(),
+      { path: requestPath, method: requestMethod }
+    );
+  }
+
+  private async executeWithFailover<T>(
+    method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE',
+    path: string,
+    body?: unknown,
+    headers?: Record<string, string>,
+    options?: Partial<RequestOptions>
+  ): Promise<ApiResponse<T>> {
+    if (!this.failoverManager) {
+      return this.httpClient.request<ApiResponse<T>>(path, {
+        method,
+        body: body as Record<string, unknown>,
+        headers,
+        ...options,
+      });
+    }
+
+    let lastError: Error | undefined;
+    const endpoints = this.failoverManager.getEndpoints().map((e) => e.url);
+
+    for (const endpointUrl of endpoints) {
+      try {
+        // Create a temporary httpClient pointed at this endpoint
+        const tempClient = new HttpClient(endpointUrl, {
+          timeout: this.config.timeout,
+          retryAttempts: getConfig().retryAttempts,
+          mode: this.mode,
+        });
+        if (this.token) {
+          tempClient.setHeader('Authorization', `Bearer ${this.token}`);
+        }
+        const result = await tempClient.request<ApiResponse<T>>(path, {
+          method,
+          body: body as Record<string, unknown>,
+          headers,
+          ...options,
+        });
+        this.failoverManager.recordSuccess(endpointUrl);
+        return result;
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+        this.failoverManager.recordFailure(endpointUrl);
+        if (endpointUrl === endpoints[endpoints.length - 1]) break;
+      }
+    }
+
+    throw lastError ?? new Error('All endpoints failed');
   }
 
   /**

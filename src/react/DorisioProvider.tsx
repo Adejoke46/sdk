@@ -59,7 +59,18 @@ export interface DorisioContextValue {
   setIsLoading: (loading: boolean) => void;
 }
 
-const DorisioContext = createContext<DorisioContextValue | null>(null);
+const DorisioContext = createContext<DorisioContextValue | undefined>(undefined);
+
+/** Runtime type guard for integrations that need to inspect context safely. */
+export function isDorisioContext(value: unknown): value is DorisioContextValue {
+  return Boolean(value && typeof value === 'object' && 'client' in value && 'config' in value && 'auth' in value);
+}
+
+/** Narrow context values without hiding an out-of-provider usage error. */
+export function requireDorisioContext(value: DorisioContextValue | undefined): DorisioContextValue {
+  if (!isDorisioContext(value)) throw new Error('useDorisio must be used within DorisioProvider');
+  return value;
+}
 
 export interface DorisioProviderProps {
   client: DorisioClient;
@@ -108,6 +119,9 @@ export function DorisioProvider({
   captureUnhandledRejections = true,
   children,
 }: DorisioProviderProps): React.ReactElement {
+  if (!client || typeof client.request !== 'function') {
+    throw new Error('DorisioProvider requires a valid DorisioClient instance');
+  }
   // Authentication state
   const [auth, setAuthState] = useState<AuthState>(
     initialAuth || {
@@ -231,13 +245,7 @@ export function DorisioProvider({
  * ```
  */
 export function useDorisio(): DorisioContextValue {
-  const context = useContext(DorisioContext);
-
-  if (!context) {
-    throw new Error('useDorisio must be used within DorisioProvider');
-  }
-
-  return context;
+  return requireDorisioContext(useContext(DorisioContext));
 }
 
 /**

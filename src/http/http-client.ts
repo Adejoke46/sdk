@@ -224,6 +224,29 @@ export class HttpClient {
     if (this.deduplicationWindow < 0) {
       throw new Error('deduplicationWindow must be greater than or equal to zero');
     }
+
+    if (options?.enableRequestQueue) {
+      this.requestQueue = new RequestQueue({
+        maxConcurrentRequests: options.maxConcurrentRequests,
+      });
+    }
+
+    if (options?.enableOfflineQueue) {
+      this.offlineQueue = new OfflineQueue();
+    }
+
+    this.metricsCollector = new MetricsCollector({
+      enabled: options?.enableMetrics ?? false,
+      callback: options?.metricsCallback,
+    });
+  }
+
+  /**
+   * Emit sanitized request/response diagnostics through the configured logger.
+   */
+  private log(message: string, data?: unknown): void {
+    if (!this.debug) return;
+    this.logger(message, data);
   }
 
   private log(message: string, data?: unknown): void {
@@ -303,6 +326,10 @@ export class HttpClient {
     return [...this.inFlightRequests];
   }
 
+  getConnectionPoolStats() {
+    return this.connectionPool.stats();
+  }
+
   configureSandbox(options: {
     seed?: number;
     latency?: number;
@@ -362,23 +389,62 @@ export class HttpClient {
         if (cached) this.deduplicationCache.delete(key);
       }
 
-      const result = await this.executeDeduplication<T>(key, async () => {
-        if (this.mode === 'sandbox') {
-          const mocked = await this.mockRouter.handle(finalOptions.method, path, finalOptions.body);
-          return (await this.interceptors.executeResponseInterceptors(mocked)) as T;
+      try {
+        const seeded: RequestOptions = {
+          ...options,
+          requestId,
+          headers: withRequestIdHeader(options.headers, requestId),
+        };
+        const finalOptions = await this.interceptors.executeRequestInterceptors(seeded);
+
+        const key = `${finalOptions.method}:${path}:${stableSerialize(finalOptions.body ?? null)}`;
+        if (this.deduplicateRequests) {
+          const cached = this.deduplicationCache.get(key);
+          if (cached && cached.expiresAt > Date.now()) return cached.promise as Promise<T>;
+          if (cached) this.deduplicationCache.delete(key);
         }
-        try {
-          return await this.sendWithRetries<T>(path, finalOptions);
-        } catch (error) {
-          if (!this.canRecoverFrom(error, path, finalOptions)) throw error;
-          try {
-            await this.refreshSessionOnce();
-          } catch {
-            throw error;
+
+        const result = await this.executeDeduplication<T>(key, async () => {
+          if (this.mode === 'sandbox') {
+            const mocked = await this.mockRouter.handle(finalOptions.method, path, finalOptions.body);
+            return (await this.interceptors.executeResponseInterceptors(mocked)) as T;
           }
-          return await this.sendWithRetries<T>(path, finalOptions);
-        }
-      });
+          try {
+            return await this.sendWithRetries<T>(path, finalOptions);
+          } catch (error) {
+            if (!this.canRecoverFrom(error, path, finalOptions)) throw error;
+            try {
+              await this.refreshSessionOnce();
+            } catch {
+              throw error;
+            }
+            return await this.sendWithRetries<T>(path, finalOptions);
+          }
+        });
+        return result;
+      } finally {
+        this.inFlightRequests.delete(requestId);
+      }
+    };
+
+    const executeWithQueue = (): Promise<T> => {
+      if (this.requestQueue) {
+        return this.requestQueue.enqueue(executeInternal);
+      }
+      return executeInternal();
+    };
+
+    const executeWithOffline = (): Promise<T> => {
+      if (this.offlineQueue) {
+        return this.offlineQueue.handleRequest(options.method, path, executeWithQueue);
+      }
+      return executeWithQueue();
+    };
+
+    try {
+      const result = await executeWithOffline();
+      success = true;
+      statusCode = 200;
       return result;
     };
 
@@ -481,6 +547,12 @@ export class HttpClient {
     return this.refreshPromise;
   }
 
+  private log(message: string, data?: unknown): void {
+    if (this.debug) {
+      this.logger(message, data);
+    }
+  }
+
   /**
    * Retry loop for a single attempt to reach the API.
    *
@@ -502,9 +574,11 @@ export class HttpClient {
     });
 
     for (let attempt = 0; attempt < attempts; attempt++) {
+      let release: (() => void) | undefined;
       try {
+        release = await this.connectionPool.acquire(options.signal);
         const startedAt = Date.now();
-        this.log('[DORISIO] request', {
+        this.logger('[DORISIO] request', {
           method: options.method,
           path,
           body: sanitize(options.body),
@@ -515,11 +589,13 @@ export class HttpClient {
         const response = await fetch(url, {
           method: options.method,
           headers,
-          body: options.body ? JSON.stringify(options.body) : undefined,
+          body: options.body ? this.serializer.serialize(options.body) : undefined,
           signal: options.signal
             ? AbortSignal.any([options.signal, AbortSignal.timeout(options.timeout ?? this.timeout)])
             : AbortSignal.timeout(options.timeout ?? this.timeout),
         });
+        options.onResponse?.(response);
+        this.onResponse?.(response);
         this.log('[DORISIO] response', {
           method: options.method,
           path,
@@ -530,7 +606,18 @@ export class HttpClient {
         });
 
         if (!response.ok) {
-          const error = await response.json().catch(() => ({}));
+          let error: Record<string, unknown> = {};
+          try {
+            const errorText = await response.text();
+            error = errorText ? this.serializer.deserialize<Record<string, unknown>>(errorText) : {};
+          } catch {
+            // Fallback for mocks that only implement json()
+            try {
+              error = await (response as { json?: () => Promise<Record<string, unknown>> }).json?.() ?? {};
+            } catch {
+              // ignore
+            }
+          }
           const retryAfterHeader = response.headers?.get?.('Retry-After');
           let retryAfter: number | undefined;
           if (retryAfterHeader) {
@@ -545,7 +632,7 @@ export class HttpClient {
             }
           }
           throw new ApiError(
-            error.error || 'Request failed',
+            String(error.error) || 'Request failed',
             response.status,
             error.code,
             retryAfter,
@@ -553,7 +640,14 @@ export class HttpClient {
           );
         }
 
-        const data = (await response.json()) as T;
+        let data: T;
+        try {
+          const text = await response.text();
+          data = this.serializer.deserialize<T>(text);
+        } catch {
+          // Fallback for mocks that only implement json()
+          data = await (response as { json?: () => Promise<T> }).json?.() ?? (undefined as T);
+        }
 
         return await this.interceptors.executeResponseInterceptors(data);
       } catch (error) {
@@ -565,7 +659,11 @@ export class HttpClient {
 
         // Don't retry requests the caller cancelled (superseded hook
         // requests) — retrying an aborted fetch just burns attempts.
-        if (options.signal?.aborted) {
+        if (
+          options.signal?.aborted ||
+          lastError.name === 'AbortError' ||
+          (lastError as { code?: number }).code === 20
+        ) {
           throw lastError;
         }
 
@@ -595,7 +693,7 @@ export class HttpClient {
             // action === 'throw' falls through to throw error
           } catch (handlerError) {
             // If error handler itself fails, log and continue with normal error handling
-            this.log('[DORISIO] error handler failed', { error: handlerError });
+            this.logger('[DORISIO] error handler failed', { error: handlerError });
           }
         }
 
@@ -616,10 +714,16 @@ export class HttpClient {
         if (attempt < attempts - 1) {
           await new Promise((resolve) => setTimeout(resolve, Math.pow(2, attempt) * 1000));
         }
+      } finally {
+        release?.();
       }
     }
 
     throw lastError || new Error('Request failed after retries');
+  }
+
+  private log(message: string, data?: unknown): void {
+    if (this.debug) this.logger(message, data);
   }
 
   /**

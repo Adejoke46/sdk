@@ -157,15 +157,15 @@ export function useTransactionHistory(
           abortControllersRef.current.add(controller);
           const isStale = () => requestId !== requestIdRef.current;
 
-          const current = stateRef.current;
-          const page = options?.page ?? current.page;
-          const pageSize = options?.pageSize ?? current.pageSize;
-          // Explicit `undefined` clears creator filter; omit to keep last creatorId.
-          const resolvedCreator = creator !== undefined ? creator : creatorIdRef.current;
-          const endpoint = resolvedCreator
-            ? `/api/v1/transactions/creator/${resolvedCreator}`
-            : '/api/v1/transactions/history';
-          const query = `?page=${page}&pageSize=${pageSize}`;
+            const current = stateRef.current;
+            const page = options?.page ?? current.page;
+            const pageSize = options?.pageSize ?? current.pageSize;
+            // Explicit `undefined` clears creator filter; omit to keep last creatorId.
+            const resolvedCreator = creator !== undefined ? creator : creatorIdRef.current;
+            const endpoint = resolvedCreator
+              ? `/api/v1/transactions/creator/${resolvedCreator}`
+              : '/api/v1/transactions/history';
+            const query = `?page=${page}&pageSize=${pageSize}`;
 
           let response;
           try {
@@ -214,7 +214,7 @@ export function useTransactionHistory(
           creatorIdRef.current = resolvedCreator;
 
           return transactions;
-        }
+        })
       ),
     [client, setError, setIsLoading, safeSetState]
   );
