@@ -105,14 +105,6 @@ export function useTransactionHistory(
     };
   }, []);
 
-  const withAbort = <T>(fn: (signal: AbortSignal) => Promise<T>): Promise<T> => {
-    const controller = new AbortController();
-    abortControllersRef.current.add(controller);
-    return fn(controller.signal).finally(() => {
-      abortControllersRef.current.delete(controller);
-    });
-  };
-
   const safeSetState = useCallback(
     (fn: React.SetStateAction<UseTransactionHistoryState>) => {
       if (!isMountedRef.current) return;
@@ -154,16 +146,16 @@ export function useTransactionHistory(
           onError: (error) => safeSetState((s) => ({ ...s, error, loading: false })),
           isMounted: () => isMountedRef.current,
         },
-        () =>
-          withAbort(async (signal) => {
-            // Claim this fetch's generation up front and cancel whatever is
-            // still in flight — its response (or abort error) is stale by
-            // definition and must never touch state.
-            const requestId = ++requestIdRef.current;
-            abortRef.current?.abort();
-            const currentController = Array.from(abortControllersRef.current).pop();
-            abortRef.current = currentController ?? null;
-            const isStale = () => requestId !== requestIdRef.current;
+        async () => {
+          // Claim this fetch's generation up front and cancel whatever is
+          // still in flight — its response (or abort error) is stale by
+          // definition and must never touch state.
+          const requestId = ++requestIdRef.current;
+          abortRef.current?.abort();
+          const controller = new AbortController();
+          abortRef.current = controller;
+          abortControllersRef.current.add(controller);
+          const isStale = () => requestId !== requestIdRef.current;
 
             const current = stateRef.current;
             const page = options?.page ?? current.page;
@@ -175,16 +167,22 @@ export function useTransactionHistory(
               : '/api/v1/transactions/history';
             const query = `?page=${page}&pageSize=${pageSize}`;
 
-            let response;
-            try {
-              response = await client.request('GET', `${endpoint}${query}`, undefined, {
-                signal,
-              });
-            } catch (err) {
-              if (!isMountedRef.current) throw err;
-              if (isStale()) return stateRef.current.transactions;
+          let response;
+          try {
+            response = await client.request('GET', `${endpoint}${query}`, undefined, {
+              signal: controller.signal,
+            });
+          } catch (err) {
+            if (controller.signal.aborted && !isMountedRef.current) {
               throw err;
             }
+            // A superseded request's failure (including its own abort) is
+            // not an error — silently keep current state.
+            if (isStale()) return stateRef.current.transactions;
+            throw err;
+          } finally {
+            abortControllersRef.current.delete(controller);
+          }
           if (isStale()) return stateRef.current.transactions;
 
           if (!response.success || !response.data) {

@@ -2,8 +2,9 @@
  * DorisioClient
  *
  * Main client for interacting with Dorisio backend API.
- * Handles authentication, request/response handling, and error management.
- * Supports sandbox/mock mode for offline testing without network calls.
+ * Handles authentication, request/response formatting, custom HTTP headers,
+ * batch processing with partial failure handling, request fingerprinting,
+ * performance metrics, offline/request queue management, and sandbox/mock mode.
  */
 
 import { HttpClient, RequestOptions, type HttpClientMode, type ProxyConfig } from './http/http-client';
@@ -40,6 +41,10 @@ import * as authMethods from './client/auth';
 import { CreateWalletRequest, UpdateWalletRequest } from './types/models';
 import * as batchMethods from './client/batch-operations';
 import {
+  BatchProcessorOptions,
+  BatchResult,
+} from './http/batch-processor';
+import {
   ErrorHandler,
   Middleware,
 } from './types/errors';
@@ -71,28 +76,15 @@ export interface ClientConfig {
   sandboxLatency?: number;
   /** Sandbox random error rate 0–1 (default 0) */
   sandboxErrorRate?: number;
+  /** Emit sanitized request/response diagnostics through the configured logger */
   debug?: boolean;
   logger?: (message: string, data?: unknown) => void;
   deduplicateRequests?: boolean;
   deduplicationWindow?: number;
   /** Custom error handler for error recovery strategies */
   errorHandler?: ErrorHandler;
-  /** Target or default API version (e.g. 'v1', 'v2') */
-  apiVersion?: string;
-  /** Supported API versions for validation and fallback */
-  supportedApiVersions?: string[];
-  /** Fallback API version when an unsupported version is encountered */
-  fallbackApiVersion?: string;
-  /** Automatically migrate requests/responses across versions (default true) */
-  autoMigrateApiVersion?: boolean;
-  /** Pre-configured deprecated endpoints */
-  deprecatedEndpoints?: DeprecatedEndpointConfig[];
-  /** Custom ApiVersionHandler instance */
-  apiVersionHandler?: ApiVersionHandler;
-  /** Callback invoked when a version change is detected from response headers */
-  onApiVersionChange?: (oldVersion: string, newVersion: string) => void;
-  /** Callback invoked when a deprecated endpoint is accessed or deprecation header received */
-  onApiDeprecation?: (warning: DeprecationWarning) => void;
+  /** Custom request ID generator for request fingerprinting */
+  requestIdGenerator?: () => string;
   /** Enable request queue with concurrency control and automatic 429 backoff */
   enableRequestQueue?: boolean;
   /** Maximum concurrent requests in flight when request queue is enabled (default: 5) */
@@ -120,6 +112,24 @@ function normalizeClientMode(mode?: ClientMode): 'live' | 'sandbox' {
   return 'live';
 }
 
+/**
+ * DorisioClient provides a full suite of payment, wallet, creator, and transaction tools.
+ *
+ * @example
+ * ```ts
+ * import { DorisioClient } from 'dorisio-sdk';
+ *
+ * const client = new DorisioClient({
+ *   baseUrl: 'https://api.dorisio.com',
+ *   token: 'user_jwt_token',
+ * });
+ *
+ * const creator = await client.getCreator('creator-123', {
+ *   headers: { 'X-Custom-Header': 'custom-value' },
+ * });
+ * console.log(creator.name);
+ * ```
+ */
 export class DorisioClient {
   private config: ClientConfig & { timeout: number; mode: 'live' | 'sandbox' };
   private httpClient: HttpClient;
@@ -147,14 +157,7 @@ export class DorisioClient {
       deduplicateRequests: config.deduplicateRequests,
       deduplicationWindow: config.deduplicationWindow,
       errorHandler: config.errorHandler,
-      apiVersion: config.apiVersion,
-      supportedApiVersions: config.supportedApiVersions,
-      fallbackApiVersion: config.fallbackApiVersion,
-      autoMigrateApiVersion: config.autoMigrateApiVersion,
-      deprecatedEndpoints: config.deprecatedEndpoints,
-      apiVersionHandler: config.apiVersionHandler,
-      onApiVersionChange: config.onApiVersionChange,
-      onApiDeprecation: config.onApiDeprecation,
+      requestIdGenerator: config.requestIdGenerator,
       enableRequestQueue: config.enableRequestQueue,
       maxConcurrentRequests: config.maxConcurrentRequests,
       enableOfflineQueue: config.enableOfflineQueue,
@@ -198,6 +201,7 @@ export class DorisioClient {
       deduplicateRequests: config.deduplicateRequests,
       deduplicationWindow: config.deduplicationWindow,
       errorHandler: this.errorHandler,
+      requestIdGenerator: config.requestIdGenerator,
       enableRequestQueue: config.enableRequestQueue,
       maxConcurrentRequests: config.maxConcurrentRequests,
       enableOfflineQueue: config.enableOfflineQueue,
@@ -242,7 +246,7 @@ export class DorisioClient {
     this.getCreator = creatorMethods.getCreator.bind(this);
     this.listCreators = creatorMethods.listCreators.bind(this);
     this.getCreatorProfile = creatorMethods.getCreatorProfile.bind(this);
-    this.verifyCreator = verificationMethods.verifyCreator.bind(this);
+    this.verifyCreator = creatorMethods.verifyCreator.bind(this);
 
     this.connectWallet = walletMethods.connectWallet.bind(this);
     this.disconnectWallet = walletMethods.disconnectWallet.bind(this);
@@ -285,13 +289,21 @@ export class DorisioClient {
     this.isAuthenticated = authMethods.isAuthenticated.bind(this);
     this.extendSession = authMethods.extendSession.bind(this);
     this.getSessionExpiry = authMethods.getSessionExpiry.bind(this);
+
     this.getCreators = batchMethods.getCreators.bind(this);
     this.getAllTransactionHistory = batchMethods.getAllTransactionHistory.bind(this);
     this.getAllWalletBalances = batchMethods.getAllWalletBalances.bind(this);
+    this.getCreatorsBatch = batchMethods.getCreatorsBatch.bind(this);
+    this.getWalletBalancesBatch = batchMethods.getWalletBalancesBatch.bind(this);
+    this.createTipsBatch = batchMethods.createTipsBatch.bind(this);
+    this.processBatchWithRetry = batchMethods.processBatchWithRetry.bind(this) as any;
+    this.retryBatch = batchMethods.retryBatch.bind(this) as any;
   }
 
   /**
    * Set authentication token
+   *
+   * @param token - Bearer JWT or API token
    */
   setToken(token: string): void {
     this.token = token;
@@ -567,99 +579,116 @@ export class DorisioClient {
   /**
    * Get currently active API version
    */
-  getApiVersion(): string {
-    return this.apiVersionHandler.getCurrentVersion();
+  on(event: OfflineEventType, listener: OfflineEventListener): void {
+    const queue = this.httpClient.getOfflineQueue();
+    if (queue) {
+      queue.on(event, listener);
+    }
   }
 
   /**
-   * Set active API version
+   * Unsubscribe from offline queue lifecycle events
    */
-  setApiVersion(version: string): void {
-    this.apiVersionHandler.setCurrentVersion(version);
+  off(event: OfflineEventType, listener: OfflineEventListener): void {
+    const queue = this.httpClient.getOfflineQueue();
+    if (queue) {
+      queue.off(event, listener);
+    }
   }
 
   /**
-   * Get API version handler instance
-   */
-  getApiVersionHandler(): ApiVersionHandler {
-    return this.apiVersionHandler;
-  }
-
-  /**
-   * Detect API version from headers
-   */
-  detectApiVersion(
-    headers?: Record<string, string | string[] | undefined> | Headers
-  ): string | undefined {
-    return this.apiVersionHandler.detectVersionFromHeaders(headers);
-  }
-
-  /**
-   * Get performance metrics summary
+   * Get collected performance metrics summary
    */
   getMetrics(): MetricsSummary {
     return this.httpClient.getMetrics();
   }
 
   /**
-   * Check if client considers itself online
+   * Get metrics collector instance
+   */
+  getMetricsCollector(): MetricsCollector {
+    return this.httpClient.getMetricsCollector();
+  }
+
+  /**
+   * Check if client is currently in online state
    */
   isOnline(): boolean {
     return this.httpClient.isOnline();
   }
 
   /**
-   * Set online status (triggers offline queue replay when switching to true)
+   * Set client online state (triggers queued mutation replay when returning to online)
    */
   setOnline(online: boolean): void {
     this.httpClient.setOnline(online);
   }
 
   /**
-   * Get number of mutations currently queued offline
+   * Get number of mutations waiting in offline queue
    */
   getOfflineQueueSize(): number {
     return this.httpClient.getOfflineQueueSize();
   }
 
-  /**
-   * Listen to offline events ('online', 'offline', 'queue-processed')
-   */
-  on(event: OfflineEventType, listener: OfflineEventListener): this {
-    this.httpClient.getOfflineQueue()?.on(event, listener);
-    return this;
-  }
-
-  /**
-   * Remove an offline event listener
-   */
-  off(event: OfflineEventType, listener: OfflineEventListener): this {
-    this.httpClient.getOfflineQueue()?.off(event, listener);
-    return this;
-  }
-
   // ---------------------------------------------------------------------------
   // Creator methods
   // ---------------------------------------------------------------------------
-  declare getCreator: (creatorId: string) => Promise<Creator>;
-  declare listCreators: (options?: {
-    page?: number;
-    pageSize?: number;
-    verified?: boolean;
-  }) => Promise<{ creators: Creator[]; total: number; page: number; pageSize: number }>;
-  declare getCreatorProfile: (username: string) => Promise<CreatorProfile>;
-  declare verifyCreator: (creatorId: string, verified: boolean) => Promise<Creator>;
+  declare getCreator: (
+    creatorId: string,
+    options?: Partial<RequestOptions>
+  ) => Promise<Creator>;
+  declare listCreators: (
+    queryOptions?: {
+      page?: number;
+      pageSize?: number;
+      verified?: boolean;
+    },
+    options?: Partial<RequestOptions>
+  ) => Promise<{ creators: Creator[]; total: number; page: number; pageSize: number }>;
+  declare getCreatorProfile: (
+    username: string,
+    options?: Partial<RequestOptions>
+  ) => Promise<CreatorProfile>;
+  declare verifyCreator: (
+    creatorId: string,
+    verified: boolean,
+    options?: Partial<RequestOptions>
+  ) => Promise<Creator>;
 
   // ---------------------------------------------------------------------------
   // Wallet methods
   // ---------------------------------------------------------------------------
-  declare connectWallet: (data: CreateWalletRequest) => Promise<Wallet>;
-  declare disconnectWallet: (walletId: string) => Promise<void>;
-  declare getWallets: (userId: string) => Promise<Wallet[]>;
-  declare getWallet: (walletId: string) => Promise<Wallet>;
-  declare updateWallet: (walletId: string, data: UpdateWalletRequest) => Promise<Wallet>;
-  declare verifyWallet: (walletId: string, proof: string) => Promise<Wallet>;
-  declare getWalletBalance: (walletId: string) => Promise<BalanceInfo>;
+  declare connectWallet: (
+    data: CreateWalletRequest,
+    options?: Partial<RequestOptions>
+  ) => Promise<Wallet>;
+  declare disconnectWallet: (
+    walletId: string,
+    options?: Partial<RequestOptions>
+  ) => Promise<void>;
+  declare getWallets: (
+    userId: string,
+    options?: Partial<RequestOptions>
+  ) => Promise<Wallet[]>;
+  declare getWallet: (
+    walletId: string,
+    options?: Partial<RequestOptions>
+  ) => Promise<Wallet>;
+  declare updateWallet: (
+    walletId: string,
+    data: UpdateWalletRequest,
+    options?: Partial<RequestOptions>
+  ) => Promise<Wallet>;
+  declare verifyWallet: (
+    walletId: string,
+    proof?: string,
+    options?: Partial<RequestOptions>
+  ) => Promise<Wallet>;
+  declare getWalletBalance: (
+    walletId: string,
+    options?: Partial<RequestOptions>
+  ) => Promise<BalanceInfo>;
 
   // ---------------------------------------------------------------------------
   // Transaction methods
@@ -673,16 +702,16 @@ export class DorisioClient {
     options?: Partial<RequestOptions>
   ) => Promise<Transaction>;
   declare getTransactionHistory: (
-    options?: {
+    queryOptions?: {
       page?: number;
       pageSize?: number;
     },
-    requestOptions?: Partial<RequestOptions>
+    options?: Partial<RequestOptions>
   ) => Promise<TransactionHistory>;
   declare getCreatorTipsReceived: (
     creatorId: string,
-    options?: { page?: number; pageSize?: number },
-    requestOptions?: Partial<RequestOptions>
+    queryOptions?: { page?: number; pageSize?: number },
+    options?: Partial<RequestOptions>
   ) => Promise<TransactionHistory>;
   declare buildPaymentTransaction: (
     tipId: string,
@@ -707,37 +736,60 @@ export class DorisioClient {
   // ---------------------------------------------------------------------------
   // History methods
   // ---------------------------------------------------------------------------
-  declare getFullTransactionHistory: (options?: {
-    page?: number;
-    pageSize?: number;
-    startDate?: Date;
-    endDate?: Date;
-    status?: 'pending' | 'confirmed' | 'failed';
-  }) => Promise<TransactionHistory>;
-  declare getTransactionStats: (userId?: string) => Promise<TransactionStats>;
-  declare getCreatorEarnings: (creatorId: string) => Promise<{
+  declare getFullTransactionHistory: (
+    queryOptions?: {
+      page?: number;
+      pageSize?: number;
+      startDate?: Date;
+      endDate?: Date;
+      status?: 'pending' | 'confirmed' | 'failed';
+    },
+    options?: Partial<RequestOptions>
+  ) => Promise<TransactionHistory>;
+  declare getTransactionStats: (
+    userId?: string,
+    options?: Partial<RequestOptions>
+  ) => Promise<TransactionStats>;
+  declare getCreatorEarnings: (
+    creatorId: string,
+    options?: Partial<RequestOptions>
+  ) => Promise<{
     totalEarnings: number;
     pendingBalance: number;
     confirmedBalance: number;
     transactionCount: number;
   }>;
-  declare exportTransactionHistory: (options?: {
-    format?: 'csv' | 'json';
-    startDate?: Date;
-    endDate?: Date;
-  }) => Promise<string>;
+  declare exportTransactionHistory: (
+    exportOptions?: {
+      format?: 'csv' | 'json';
+      startDate?: Date;
+      endDate?: Date;
+    },
+    options?: Partial<RequestOptions>
+  ) => Promise<string>;
 
   // ---------------------------------------------------------------------------
   // Balance methods
   // ---------------------------------------------------------------------------
-  declare getBalance: (userId: string) => Promise<AccountBalance>;
-  declare getCreatorPendingPayout: (creatorId: string) => Promise<{
+  declare getBalance: (
+    userId: string,
+    options?: Partial<RequestOptions>
+  ) => Promise<AccountBalance>;
+  declare getCreatorPendingPayout: (
+    creatorId: string,
+    options?: Partial<RequestOptions>
+  ) => Promise<{
     pending: number;
     nextPayoutDate?: string;
     minimumThreshold: number;
   }>;
-  declare canPayout: (creatorId: string) => Promise<boolean>;
-  declare getAccountSummary: () => Promise<{
+  declare canPayout: (
+    creatorId: string,
+    options?: Partial<RequestOptions>
+  ) => Promise<boolean>;
+  declare getAccountSummary: (
+    options?: Partial<RequestOptions>
+  ) => Promise<{
     userId: string;
     email: string;
     role: string;
@@ -752,36 +804,92 @@ export class DorisioClient {
   // ---------------------------------------------------------------------------
   declare requestCreatorVerification: (
     creatorId: string,
-    data: { documentType: string; documentUrl?: string; description?: string }
+    data: { documentType: string; documentUrl?: string; description?: string },
+    options?: Partial<RequestOptions>
   ) => Promise<VerificationStatus>;
   declare getCreatorVerificationStatus: (
-    creatorId: string
+    creatorId: string,
+    options?: Partial<RequestOptions>
   ) => Promise<VerificationStatus & { status: string }>;
-  declare getWalletVerificationStatus: (walletId: string) => Promise<VerificationStatus>;
+  declare getWalletVerificationStatus: (
+    walletId: string,
+    options?: Partial<RequestOptions>
+  ) => Promise<VerificationStatus>;
   declare requestWalletVerificationChallenge: (
-    walletId: string
+    walletId: string,
+    options?: Partial<RequestOptions>
   ) => Promise<{ challenge: string; expiresIn: number }>;
-  declare isTransactionVerified: (transactionId: string) => Promise<boolean>;
+  declare isTransactionVerified: (
+    transactionId: string,
+    options?: Partial<RequestOptions>
+  ) => Promise<boolean>;
 
   // ---------------------------------------------------------------------------
   // Auth methods
   // ---------------------------------------------------------------------------
-  declare refreshSession: () => Promise<SessionInfo>;
-  declare validateSession: () => Promise<User>;
-  declare getCurrentUser: () => Promise<User>;
-  declare logout: () => Promise<void>;
-  declare isAuthenticated: () => Promise<boolean>;
-  declare extendSession: () => Promise<SessionInfo>;
-  declare getSessionExpiry: () => Promise<{
+  declare refreshSession: (
+    options?: Partial<RequestOptions>
+  ) => Promise<SessionInfo>;
+  declare validateSession: (
+    options?: Partial<RequestOptions>
+  ) => Promise<User>;
+  declare getCurrentUser: (
+    options?: Partial<RequestOptions>
+  ) => Promise<User>;
+  declare logout: (
+    options?: Partial<RequestOptions>
+  ) => Promise<void>;
+  declare isAuthenticated: (
+    options?: Partial<RequestOptions>
+  ) => Promise<boolean>;
+  declare extendSession: (
+    options?: Partial<RequestOptions>
+  ) => Promise<SessionInfo>;
+  declare getSessionExpiry: (
+    options?: Partial<RequestOptions>
+  ) => Promise<{
     expiresAt: string;
     expiresIn: number;
     isExpired: boolean;
   }>;
 
-  declare getCreators: (creatorIds: string[], concurrency?: number) => Promise<Creator[]>;
-  declare getAllTransactionHistory: (pageSize?: number) => Promise<TransactionHistory>;
+  // ---------------------------------------------------------------------------
+  // Batch operations
+  // ---------------------------------------------------------------------------
+  declare getCreators: (
+    creatorIds: string[],
+    concurrency?: number,
+    options?: Partial<RequestOptions>
+  ) => Promise<Creator[]>;
+  declare getAllTransactionHistory: (
+    pageSize?: number,
+    options?: Partial<RequestOptions>
+  ) => Promise<TransactionHistory>;
   declare getAllWalletBalances: (
     walletIds: string[],
-    concurrency?: number
+    concurrency?: number,
+    options?: Partial<RequestOptions>
   ) => Promise<BalanceInfo[]>;
+  declare getCreatorsBatch: (
+    creatorIds: string[],
+    options?: BatchProcessorOptions
+  ) => Promise<BatchResult<string, Creator>>;
+  declare getWalletBalancesBatch: (
+    walletIds: string[],
+    options?: BatchProcessorOptions
+  ) => Promise<BatchResult<string, BalanceInfo>>;
+  declare createTipsBatch: (
+    tips: CreateTipRequest[],
+    options?: BatchProcessorOptions
+  ) => Promise<BatchResult<CreateTipRequest, Transaction>>;
+  declare processBatchWithRetry: <T, R>(
+    items: T[],
+    fn: (item: T, index: number) => Promise<R>,
+    options?: BatchProcessorOptions
+  ) => Promise<BatchResult<T, R>>;
+  declare retryBatch: <T, R>(
+    batchResult: BatchResult<T, R>,
+    fn: (item: T, index: number) => Promise<R>,
+    options?: BatchProcessorOptions
+  ) => Promise<BatchResult<T, R>>;
 }

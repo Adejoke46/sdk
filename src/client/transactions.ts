@@ -9,7 +9,7 @@ import { Transaction, TransactionHistory } from '../types/models';
 import { normalizeTransaction, normalizeTransactionHistory } from '../utils/normalizers';
 import { DorisioClient } from '../client';
 import { RequestValidator } from '../utils/validators';
-import type { RequestOptions } from '../http/http-client';
+import { RequestOptions } from '../http/http-client';
 
 export interface CreateTipRequest {
   creatorId: string;
@@ -78,10 +78,11 @@ export interface SubmitTransactionResponse {
  * @param data.amount - Tip amount in USD (must be > 0)
  * @param data.message - Optional message to include with the tip (max 500 chars)
  * @param data.idempotencyKey - Optional UUID for idempotent retries
+ * @param options - Optional request options including custom HTTP headers
  *
  * @returns The created tip transaction
  *
- * @throws Will throw if creator doesn't exist, amount is invalid, or wallet not verified
+ * @throws {Error} Will throw if creator doesn't exist, amount is invalid, or wallet not verified
  *
  * @example
  * ```ts
@@ -95,6 +96,8 @@ export interface SubmitTransactionResponse {
  *   amount: 50,
  *   message: 'Great content!',
  *   idempotencyKey,
+ * }, {
+ *   headers: { 'X-Custom-Header': 'tip-header' },
  * });
  *
  * console.log(tip.id);
@@ -111,7 +114,7 @@ export async function createTip(
   RequestValidator.positiveNumber(data.amount, 'Tip amount');
   if (data.message !== undefined) RequestValidator.stringLength(data.message, 1, 500, 'message');
 
-  const headers: Record<string, string> = {};
+  const headers: Record<string, string> = { ...options?.headers };
   if (data.idempotencyKey) {
     headers['Idempotency-Key'] = data.idempotencyKey;
   }
@@ -127,7 +130,7 @@ export async function createTip(
       metadata: data.metadata,
       tags: data.tags,
     },
-    { headers, methodName: 'createTip', ...options }
+    { ...options, headers, methodName: 'createTip' }
   );
 
   if (!response.success || !response.data) {
@@ -144,22 +147,33 @@ export async function createTip(
  * Retrieves the current status of a tip transaction.
  *
  * @param transactionId - The transaction ID (UUID)
+ * @param options - Optional request options including custom HTTP headers
  * @returns The transaction details including status
  *
- * @throws Will throw if transaction not found or user doesn't have permission
+ * @throws {Error} Will throw if transaction not found or user doesn't have permission
  *
  * @example
  * ```ts
- * const transaction = await client.getTipStatus('tx-id-123');
+ * const transaction = await client.getTipStatus('tx-id-123', {
+ *   headers: { 'X-Request-ID': 'req-status-check' },
+ * });
  * console.log(transaction.status); // 'pending' | 'confirmed' | 'failed'
  * ```
  */
 export async function getTipStatus(
   this: DorisioClient,
-  transactionId: string
+  transactionId: string,
+  options?: Partial<RequestOptions>
 ): Promise<Transaction> {
   RequestValidator.nonEmptyString(transactionId, 'transactionId');
-  const response = await this.request('GET', `/api/v1/transactions/${transactionId}`);
+  const response = options
+    ? await this.request(
+        'GET',
+        `/api/v1/transactions/${transactionId}`,
+        undefined,
+        options
+      )
+    : await this.request('GET', `/api/v1/transactions/${transactionId}`);
 
   if (!response.success || !response.data) {
     throw new Error(response.error?.message || `Failed to fetch transaction: ${transactionId}`);
@@ -174,18 +188,19 @@ export async function getTipStatus(
  *
  * Retrieves paginated history of tips sent by the current user.
  *
- * @param options - Query options
- * @param options.page - Page number (1-indexed, default: 1)
- * @param options.pageSize - Results per page (default: 20, max: 100)
+ * @param queryOptions - Query pagination options
+ * @param queryOptions.page - Page number (1-indexed, default: 1)
+ * @param queryOptions.pageSize - Results per page (default: 20, max: 100)
+ * @param options - Optional request options including custom HTTP headers
  *
  * @returns Paginated transaction history
  *
  * @example
  * ```ts
- * const history = await client.getTransactionHistory({
- *   page: 1,
- *   pageSize: 10,
- * });
+ * const history = await client.getTransactionHistory(
+ *   { page: 1, pageSize: 10 },
+ *   { headers: { 'X-Audit-User': 'admin' } }
+ * );
  *
  * console.log(`Total tips sent: ${history.total}`);
  * history.transactions.forEach(tx => {
@@ -195,22 +210,25 @@ export async function getTipStatus(
  */
 export async function getTransactionHistory(
   this: DorisioClient,
-  options?: {
+  queryOptions?: {
     page?: number;
     pageSize?: number;
-  }
+  },
+  options?: Partial<RequestOptions>
 ): Promise<TransactionHistory> {
-  if (options?.page !== undefined && options.page < 1) throw new Error('page must be at least 1');
-  if (options?.pageSize !== undefined && (options.pageSize < 1 || options.pageSize > 100)) {
+  if (queryOptions?.page !== undefined && queryOptions.page < 1) throw new Error('page must be at least 1');
+  if (queryOptions?.pageSize !== undefined && (queryOptions.pageSize < 1 || queryOptions.pageSize > 100)) {
     throw new Error('pageSize must be between 1 and 100');
   }
   const params = new URLSearchParams();
 
-  if (options?.page) params.append('page', String(options.page));
-  if (options?.pageSize) params.append('pageSize', String(options.pageSize));
+  if (queryOptions?.page) params.append('page', String(queryOptions.page));
+  if (queryOptions?.pageSize) params.append('pageSize', String(queryOptions.pageSize));
 
   const query = params.toString() ? `?${params.toString()}` : '';
-  const response = await this.request('GET', `/api/v1/transactions/history${query}`);
+  const response = options
+    ? await this.request('GET', `/api/v1/transactions/history${query}`, undefined, options)
+    : await this.request('GET', `/api/v1/transactions/history${query}`);
 
   if (!response.success || !response.data) {
     throw new Error(response.error?.message || 'Failed to fetch transaction history');
@@ -222,21 +240,42 @@ export async function getTransactionHistory(
 /**
  * Get tips received by a creator
  * GET /api/v1/transactions/creator/:creatorId
+ *
+ * @param creatorId - Unique creator identifier (UUID)
+ * @param queryOptions - Optional page and pageSize options
+ * @param options - Optional request options including custom HTTP headers
+ * @returns Paginated transaction history for the creator
+ *
+ * @throws {Error} If creatorId is invalid or request fails
+ *
+ * @example
+ * ```ts
+ * const tips = await client.getCreatorTipsReceived('creator-456', { page: 1, pageSize: 20 });
+ * console.log(`Received ${tips.total} tips`);
+ * ```
  */
 export async function getCreatorTipsReceived(
   this: DorisioClient,
   creatorId: string,
-  options?: {
+  queryOptions?: {
     page?: number;
     pageSize?: number;
-  }
+  },
+  options?: Partial<RequestOptions>
 ): Promise<TransactionHistory> {
   const params = new URLSearchParams();
-  if (options?.page) params.append('page', String(options.page));
-  if (options?.pageSize) params.append('pageSize', String(options.pageSize));
+  if (queryOptions?.page) params.append('page', String(queryOptions.page));
+  if (queryOptions?.pageSize) params.append('pageSize', String(queryOptions.pageSize));
 
   const query = params.toString() ? `?${params.toString()}` : '';
-  const response = await this.request('GET', `/api/v1/transactions/creator/${creatorId}${query}`);
+  const response = options
+    ? await this.request(
+        'GET',
+        `/api/v1/transactions/creator/${creatorId}${query}`,
+        undefined,
+        options
+      )
+    : await this.request('GET', `/api/v1/transactions/creator/${creatorId}${query}`);
 
   if (!response.success || !response.data) {
     throw new Error(
@@ -261,10 +300,11 @@ export async function getCreatorTipsReceived(
  * @param data.amount - Payment amount in XLM
  * @param data.assetCode - Optional: Custom asset code (default: native XLM)
  * @param data.assetIssuer - Optional: Custom asset issuer address
+ * @param options - Optional request options including custom HTTP headers
  *
  * @returns Unsigned transaction ready for signing
  *
- * @throws Will throw if tip not found or parameters invalid
+ * @throws {Error} Will throw if tip not found or parameters invalid
  *
  * @example
  * ```ts
@@ -284,18 +324,26 @@ export async function buildPaymentTransaction(
   data: BuildTransactionRequest,
   options?: Partial<RequestOptions>
 ): Promise<BuildTransactionResponse> {
-  const response = await this.request(
-    'POST',
-    `/api/v1/transactions/${tipId}/build`,
-    {
-      senderPublicKey: data.senderPublicKey,
-      creatorPublicKey: data.creatorPublicKey,
-      amount: data.amount,
-      assetCode: data.assetCode,
-      assetIssuer: data.assetIssuer,
-    },
-    { methodName: 'buildPaymentTransaction', ...options }
-  );
+  const payload = {
+    senderPublicKey: data.senderPublicKey,
+    creatorPublicKey: data.creatorPublicKey,
+    amount: data.amount,
+    assetCode: data.assetCode,
+    assetIssuer: data.assetIssuer,
+  };
+
+  const response = options
+    ? await this.request(
+        'POST',
+        `/api/v1/transactions/${tipId}/build`,
+        payload,
+        { methodName: 'buildPaymentTransaction', ...options }
+      )
+    : await this.request(
+        'POST',
+        `/api/v1/transactions/${tipId}/build`,
+        payload
+      );
 
   if (!response.success || !response.data) {
     throw new Error(response.error?.message || 'Failed to build payment transaction');
@@ -314,10 +362,11 @@ export async function buildPaymentTransaction(
  * @param tipId - The tip transaction ID (UUID)
  * @param data - Submission parameters
  * @param data.transactionEnvelope - The signed transaction XDR envelope
+ * @param options - Optional request options including custom HTTP headers
  *
  * @returns Submission response with transaction hash
  *
- * @throws Will throw if transaction is invalid, already submitted, or network fails
+ * @throws {Error} Will throw if transaction is invalid, already submitted, or network fails
  *
  * @example
  * ```ts
@@ -340,14 +389,22 @@ export async function submitPaymentTransaction(
     throw new Error('Signed transaction envelope is required');
   }
 
-  const response = await this.request(
-    'POST',
-    `/api/v1/transactions/${tipId}/submit`,
-    {
-      transactionEnvelope: data.transactionEnvelope,
-    },
-    { methodName: 'submitPaymentTransaction', ...options }
-  );
+  const payload = {
+    transactionEnvelope: data.transactionEnvelope,
+  };
+
+  const response = options
+    ? await this.request(
+        'POST',
+        `/api/v1/transactions/${tipId}/submit`,
+        payload,
+        { methodName: 'submitPaymentTransaction', ...options }
+      )
+    : await this.request(
+        'POST',
+        `/api/v1/transactions/${tipId}/submit`,
+        payload
+      );
 
   if (!response.success || !response.data) {
     throw new Error(response.error?.message || 'Failed to submit payment transaction');
@@ -364,14 +421,17 @@ export async function submitPaymentTransaction(
  * Use this after submitting a transaction to confirm it was successfully processed.
  *
  * @param tipId - The tip transaction ID (UUID)
+ * @param options - Optional request options including custom HTTP headers
  * @returns The transaction with updated confirmation status
  *
- * @throws Will throw if transaction not found
+ * @throws {Error} Will throw if transaction not found
  *
  * @example
  * ```ts
  * // After submitting transaction
- * const confirmed = await client.checkTransactionConfirmation('tip-123');
+ * const confirmed = await client.checkTransactionConfirmation('tip-123', {
+ *   headers: { 'X-Poll-Attempt': '3' },
+ * });
  *
  * if (confirmed.status === 'confirmed') {
  *   console.log('Payment successful!');
@@ -402,15 +462,38 @@ export async function checkTransactionConfirmation(
 /**
  * Update tip status (typically used by backend confirmation service)
  * PATCH /api/v1/transactions/:id/status
+ *
+ * @param tipId - The tip transaction ID (UUID)
+ * @param status - Target status string
+ * @param options - Optional request options including custom HTTP headers
+ * @returns Updated transaction record
+ *
+ * @throws {Error} If tip status update fails
+ *
+ * @example
+ * ```ts
+ * const updated = await client.updateTipStatus('tip-123', 'completed');
+ * console.log('Tip status:', updated.status);
+ * ```
  */
 export async function updateTipStatus(
   this: DorisioClient,
   tipId: string,
-  status: 'pending' | 'completed' | 'failed' | 'cancelled'
+  status: 'pending' | 'completed' | 'failed' | 'cancelled',
+  options?: Partial<RequestOptions>
 ): Promise<Transaction> {
-  const response = await this.request('PATCH', `/api/v1/transactions/${tipId}/status`, {
-    status,
-  });
+  const response = options
+    ? await this.request(
+        'PATCH',
+        `/api/v1/transactions/${tipId}/status`,
+        { status },
+        options
+      )
+    : await this.request(
+        'PATCH',
+        `/api/v1/transactions/${tipId}/status`,
+        { status }
+      );
 
   if (!response.success || !response.data) {
     throw new Error(response.error?.message || 'Failed to update tip status');

@@ -297,6 +297,90 @@ const event = parseWebhookPayload(req.body);
 console.log(`Event: ${event.event}`, event.data);
 ```
 
+### Custom Request Headers
+
+You can pass custom headers per request across all client methods to pass tracing headers, tenant identifiers, or custom auth metadata. Custom headers merge with and can override default client headers:
+
+```typescript
+// Custom headers on API calls
+const tip = await client.createTip(
+  {
+    creatorId: 'creator-123',
+    amount: 25,
+    message: 'Awesome work!',
+  },
+  {
+    headers: {
+      'X-Trace-Id': 'trace-abc-123',
+      'X-Tenant-ID': 'tenant-99',
+    },
+  }
+);
+
+// Custom headers on creator fetching
+const creator = await client.getCreator('creator-123', {
+  headers: { 'X-Custom-Header': 'custom-value' },
+});
+```
+
+### Batch Operations & Partial Failure Handling
+
+Perform bulk operations with concurrency limits, exponential backoff retries, and detailed breakdown of successful and failed items:
+
+```typescript
+// Batch fetch creators with retry capability
+const result = await client.getCreatorsBatch(['creator-1', 'creator-2', 'creator-3'], {
+  concurrency: 5,
+  maxRetries: 3,
+  retryDelayMs: 500,
+});
+
+console.log(`Processed ${result.successful.length} of ${result.total} creators.`);
+
+if (result.hasFailures) {
+  console.warn(`Failed items: ${result.failed.length}`);
+  
+  // Retry only the failed items
+  const retryResult = await client.retryBatch(result.failed, async (creatorId) => {
+    return client.getCreator(creatorId);
+  });
+}
+
+// Batch tip creations with partial failure resilience
+const tipBatch = await client.createTipsBatch([
+  { creatorId: 'c1', amount: 10 },
+  { creatorId: 'c2', amount: 20 },
+]);
+```
+
+### Request Fingerprinting & Debugging
+
+Every request is assigned a unique `X-Request-ID` for end-to-end tracing across your frontend and backend infrastructure:
+
+```typescript
+// Custom request ID generator or structured logger
+const client = new DorisioClient({
+  baseUrl: 'https://api.dorisio.com',
+  token: 'my-token',
+  requestIdGenerator: () => `req-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
+  logger: {
+    level: 'debug',
+    handler: (entry) => {
+      console.log(`[${entry.timestamp}] [${entry.level.toUpperCase()}] [req:${entry.requestId}] ${entry.message}`);
+    },
+  },
+});
+
+// Access request ID on errors for debugging and support tickets
+try {
+  await client.getCreator('non-existent');
+} catch (error) {
+  if (error instanceof DorisioError) {
+    console.error(`Request failed with ID ${error.requestId}: ${error.message}`);
+  }
+}
+```
+
 ### React Hooks
 
 #### useCreateTip
@@ -304,30 +388,48 @@ console.log(`Event: ${event.event}`, event.data);
 ```typescript
 const { createTip, loading, error, data } = useCreateTip();
 
-const tip = await createTip({
-  amount: 50,
-  currency: 'USD',
-  creatorId: 'xxx',
-  idempotencyKey: uuidv4(),
-});
+const tip = await createTip(
+  {
+    amount: 50,
+    currency: 'USD',
+    creatorId: 'xxx',
+    idempotencyKey: uuidv4(),
+  },
+  {
+    headers: { 'X-Source': 'creator-modal' },
+  }
+);
 ```
 
 #### useWallet
 
 ```typescript
-const { wallet, loading, error, refetch } = useWallet();
+const { wallet, loading, error, refetch } = useWallet({
+  headers: { 'X-Custom-Header': 'wallet-view' },
+});
 
 console.log(wallet?.balance, wallet?.network);
 refetch(); // Manual refresh
 ```
 
-#### useCreatorBalance
+#### useCreator
 
 ```typescript
-const { balance, loading, error } = useCreatorBalance(creatorId);
+const { creator, loading, error, refetch } = useCreator('creator-123', {
+  headers: { 'X-App-Client': 'web-dashboard' },
+});
 
-console.log('Total earnings:', balance?.totalEarnings);
-console.log('Pending:', balance?.pendingBalance);
+console.log('Creator name:', creator?.name);
+```
+
+#### useUser
+
+```typescript
+const { user, loading, error, refetch } = useUser({
+  headers: { 'X-Context': 'user-profile' },
+});
+
+console.log('Logged in user:', user?.email);
 ```
 
 #### useTransactionHistory

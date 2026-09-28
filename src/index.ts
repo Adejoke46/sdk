@@ -25,7 +25,8 @@ export type {
   ResponseInterceptor,
   ErrorInterceptor,
 } from './http/interceptors';
-export type { RequestOptions } from './http/http-client';
+export type { RequestOptions, HttpClientOptions, HttpClientMode } from './http/http-client';
+export { HttpClient } from './http/http-client';
 export { RequestQueue, type RequestQueueOptions } from './http/request-queue';
 export { ConnectionPool, type ConnectionPoolOptions, type ConnectionPoolStats } from './http/connection-pool';
 export {
@@ -112,6 +113,13 @@ export {
   WalletVerificationError,
   PaymentError,
   RateLimitError,
+} from './types/errors';
+export type {
+  ErrorHandler,
+  ErrorHandlerAction,
+  ErrorHandlerContext,
+  Middleware,
+  MiddlewareContext,
 } from './types/errors';
 
 // Re-export domain models
@@ -279,6 +287,11 @@ export {
   getCreators,
   getAllTransactionHistory,
   getAllWalletBalances,
+  getCreatorsBatch,
+  getWalletBalancesBatch,
+  createTipsBatch,
+  processBatchWithRetry,
+  retryBatch,
 } from './client/batch-operations';
 export type { VerificationStatus } from './client/verification';
 export type { SessionInfo } from './client/auth';
