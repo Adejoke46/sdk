@@ -878,4 +878,8 @@ export class HttpClient {
   getOfflineQueueSize(): number {
     return this.offlineQueue ? this.offlineQueue.getQueueSize() : 0;
   }
+
+  private log(message: string, data: unknown): void {
+    if (this.debug) this.logger(message, data);
+  }
 }

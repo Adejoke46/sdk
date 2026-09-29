@@ -33,6 +33,7 @@ function cursorClient(pages: number[][]) {
   const request = vi.fn(async (_method: string, path: string) => {
     const cursor = new URLSearchParams(path.split('?')[1] ?? '').get('cursor');
     const idx = cursor ? Number(cursor.slice(1)) : 0;
+    const pageItems = pages[idx] ?? [];
     return {
       success: true,
       data: {

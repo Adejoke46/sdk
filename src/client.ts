@@ -40,6 +40,7 @@ import * as verificationMethods from './client/verification';
 import * as authMethods from './client/auth';
 import { CreateWalletRequest, UpdateWalletRequest } from './types/models';
 import * as batchMethods from './client/batch-operations';
+import { GraphQLClient } from './graphql/graphql-client';
 import {
   BatchProcessorOptions,
   BatchResult,
@@ -131,6 +132,7 @@ function normalizeClientMode(mode?: ClientMode): 'live' | 'sandbox' {
  * ```
  */
 export class DorisioClient {
+  public readonly graphql: GraphQLClient;
   private config: ClientConfig & { timeout: number; mode: 'live' | 'sandbox' };
   private httpClient: HttpClient;
   private token?: string;
@@ -309,6 +311,7 @@ export class DorisioClient {
     this.token = token;
     this.config.token = token;
     this.httpClient.setHeader('Authorization', `Bearer ${token}`);
+    this.graphql.setToken(token);
   }
 
   /**
@@ -318,6 +321,7 @@ export class DorisioClient {
     this.token = undefined;
     this.config.token = undefined;
     this.httpClient.removeHeader('Authorization');
+    this.graphql.clearToken();
   }
 
   /**
@@ -474,6 +478,7 @@ export class DorisioClient {
     this.mode = normalizeClientMode(mode);
     this.config.mode = this.mode;
     this.httpClient.setMode(mode as HttpClientMode);
+    this.graphql.setMode(this.mode);
   }
 
   /**

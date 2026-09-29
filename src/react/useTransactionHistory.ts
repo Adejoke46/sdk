@@ -183,7 +183,7 @@ export function useTransactionHistory(
           } finally {
             abortControllersRef.current.delete(controller);
           }
-          if (isStale()) return stateRef.current.transactions;
+          if (isMountedRef.current && isStale()) return stateRef.current.transactions;
 
           if (!response.success || !response.data) {
             throw new Error(response.error?.message || 'Failed to fetch transaction history');

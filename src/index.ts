@@ -10,6 +10,37 @@ export const SDK_VERSION = '0.1.0';
 // Re-export client and utilities
 export { DorisioClient, type ClientConfig } from './client';
 
+// Re-export GraphQL client and queries
+export {
+  GraphQLClient,
+  GraphQLCache,
+  GraphQLError,
+  type GraphQLClientConfig,
+  type GraphQLRequestOptions,
+  type GraphQLResponse,
+  type GraphQLErrorItem,
+  type GraphQLErrorLocation,
+  type GraphQLCacheOptions,
+  type CacheEntry,
+} from './graphql/graphql-client';
+export {
+  GET_CREATOR,
+  GET_CREATOR_WITH_USER,
+  LIST_CREATORS,
+  GET_CREATOR_PROFILE,
+  GET_TRANSACTION,
+  GET_TRANSACTION_WITH_DETAILS,
+  GET_TRANSACTION_HISTORY,
+  GET_WALLET,
+  GET_WALLETS,
+  CREATE_TIP,
+  buildCreatorQuery,
+  buildListCreatorsQuery,
+  buildTransactionQuery,
+  buildTransactionHistoryQuery,
+  buildCustomQuery,
+} from './graphql/queries';
+
 // Re-export HTTP interceptors (public API for custom middleware)
 export {
   ApiVersionHandler,
