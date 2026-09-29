@@ -50,6 +50,7 @@ import {
   Middleware,
 } from './types/errors';
 import { TelemetryClient, type TelemetryConfig } from './telemetry';
+import { PluginSystem, type Plugin } from './lib/plugin-system';
 import type { MetricsCallback, MetricsSummary } from './lib/metrics';
 import type { OfflineEventType, OfflineEventListener } from './http/offline-queue';
 import {
@@ -146,6 +147,7 @@ export class DorisioClient {
   private errorReporter?: ErrorReporter;
   private hookManager: HookManager;
   private telemetryClient?: TelemetryClient;
+  private pluginSystem: PluginSystem;
 
   constructor(config: ClientConfig) {
     const mode = normalizeClientMode(config.mode);
@@ -248,6 +250,9 @@ export class DorisioClient {
     if (config.telemetry && config.telemetry.enabled) {
       this.telemetryClient = new TelemetryClient(config.telemetry);
     }
+
+    // Initialize plugin system
+    this.pluginSystem = new PluginSystem();
   }
 
   /**
@@ -952,5 +957,51 @@ export class DorisioClient {
     if (this.telemetryClient) {
       await this.telemetryClient.shutdown();
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Plugin system methods
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Install a plugin
+   */
+  async installPlugin(plugin: Plugin): Promise<void> {
+    await this.pluginSystem.install(plugin);
+  }
+
+  /**
+   * Uninstall a plugin
+   */
+  async uninstallPlugin(pluginName: string): Promise<void> {
+    await this.pluginSystem.uninstall(pluginName);
+  }
+
+  /**
+   * Get installed plugin by name
+   */
+  getPlugin(name: string): Plugin | undefined {
+    return this.pluginSystem.getPlugin(name);
+  }
+
+  /**
+   * Get all installed plugins
+   */
+  getPlugins(): Plugin[] {
+    return this.pluginSystem.getPlugins();
+  }
+
+  /**
+   * Check if plugin is installed
+   */
+  isPluginInstalled(name: string): boolean {
+    return this.pluginSystem.isPluginInstalled(name);
+  }
+
+  /**
+   * Get plugin system instance for advanced operations
+   */
+  getPluginSystem(): PluginSystem {
+    return this.pluginSystem;
   }
 }
