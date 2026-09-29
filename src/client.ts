@@ -62,6 +62,7 @@ import {
 import type { ErrorReporter } from './lib/error-reporter';
 import { HookManager, type HookRegistration } from './lib/hooks';
 import { ThrottleManager } from './http/throttle-manager';
+import type { RequestCompressionConfig } from './http/compress';
 
 export type ClientMode = 'sandbox' | 'live' | 'production';
 
@@ -109,6 +110,8 @@ export interface ClientConfig {
   throttleWindowMs?: number;
   /** Proxy configuration for corporate environments */
   proxy?: ProxyConfig;
+  /** Compress serialized request bodies above the configured threshold (default 1 KiB). */
+  compress?: RequestCompressionConfig;
   /** Telemetry configuration for usage analytics */
   telemetry?: TelemetryConfig;
 }
@@ -177,6 +180,7 @@ export class DorisioClient {
       throttleMaxRequests: config.throttleMaxRequests,
       throttleWindowMs: config.throttleWindowMs,
       proxy: config.proxy,
+      compress: config.compress,
     };
 
     this.token = config.token;

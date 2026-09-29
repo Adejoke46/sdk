@@ -12,11 +12,14 @@ import { generateRequestId, isRequestIdempotent, RetryConflictError } from './re
 import { MockRouter, type SandboxHistoryEntry } from '../sandbox/mock-router';
 import { RequestQueue } from './request-queue';
 import { OfflineQueue } from './offline-queue';
+import { ConnectionPool } from './connection-pool';
+import { JsonSerializer } from './serializer';
 import { MetricsCollector, type MetricsSummary, type MetricsCallback } from '../lib/metrics';
 import { ThrottleManager } from './throttle-manager';
 import { HookManager, type HookContext, type ResponseContext } from '../lib/hooks';
 import { StreamHandler, type StreamOptions, type StreamResult, isLargeResponse } from './stream-handler';
 import { getTracingProvider, SpanStatus } from '../lib/telemetry';
+import { prepareRequestBody, type RequestCompressionConfig } from './compress';
 
 export type HttpClientMode = 'live' | 'sandbox' | 'production';
 
@@ -37,6 +40,8 @@ export interface RequestOptions {
    * skips retries. Aborted requests reject instead of retrying.
    */
   signal?: AbortSignal;
+  /** Callback invoked after the response is received but before middleware processing. */
+  onResponse?: (response: Response) => void;
   /**
    * Stable id for this logical request. All retry attempts reuse it (sent to
    * the server as `X-Request-Id` when the caller did not already set one) and
@@ -111,6 +116,10 @@ export interface HttpClientOptions {
   hookManager?: HookManager;
   /** Proxy configuration */
   proxy?: ProxyConfig;
+  /** Callback invoked after the response is received. */
+  onResponse?: (response: Response) => void;
+  /** Request compression settings (enabled by default above a 1 KiB threshold). */
+  compress?: RequestCompressionConfig;
 }
 
 export interface ProxyConfig {
@@ -216,10 +225,14 @@ export class HttpClient {
   private requestIdGenerator?: () => string;
   private requestQueue?: RequestQueue;
   private offlineQueue?: OfflineQueue;
+  private connectionPool: ConnectionPool;
+  private serializer: JsonSerializer;
   private metricsCollector: MetricsCollector;
   private throttleManager?: ThrottleManager;
   private hookManager?: HookManager;
   private proxy?: ProxyConfig;
+  private onResponse?: (response: Response) => void;
+  private compression?: RequestCompressionConfig;
   private streamHandler: StreamHandler;
 
   constructor(baseUrl: string, options?: HttpClientOptions) {
@@ -263,21 +276,6 @@ export class HttpClient {
       throw new Error('deduplicationWindow must be greater than or equal to zero');
     }
 
-    if (options?.enableRequestQueue) {
-      this.requestQueue = new RequestQueue({
-        maxConcurrentRequests: options.maxConcurrentRequests,
-      });
-    }
-
-    if (options?.enableOfflineQueue) {
-      this.offlineQueue = new OfflineQueue();
-    }
-
-    this.metricsCollector = new MetricsCollector({
-      enabled: options?.enableMetrics ?? false,
-      callback: options?.metricsCallback,
-    });
-
     if (options?.enableThrottling) {
       this.throttleManager = new ThrottleManager({
         maxRequests: options.throttleMaxRequests,
@@ -285,19 +283,18 @@ export class HttpClient {
       });
     }
 
+    this.connectionPool = new ConnectionPool();
+    this.serializer = new JsonSerializer();
     this.hookManager = options?.hookManager;
     this.proxy = options?.proxy;
+    this.onResponse = options?.onResponse;
+    this.compression = options?.compress;
     this.streamHandler = new StreamHandler();
   }
 
   /**
    * Emit sanitized request/response diagnostics through the configured logger.
    */
-  private log(message: string, data?: unknown): void {
-    if (!this.debug) return;
-    this.logger(message, data);
-  }
-
   private log(message: string, data?: unknown): void {
     if (this.debug) {
       this.logger(message, data);
@@ -519,27 +516,6 @@ export class HttpClient {
       success = true;
       statusCode = 200;
       return result;
-    };
-
-    const executeWithQueue = (): Promise<T> => {
-      if (this.requestQueue) {
-        return this.requestQueue.enqueue(executeInternal);
-      }
-      return executeInternal();
-    };
-
-    const executeWithOffline = (): Promise<T> => {
-      if (this.offlineQueue) {
-        return this.offlineQueue.handleRequest(options.method, path, executeWithQueue);
-      }
-      return executeWithQueue();
-    };
-
-    try {
-      const result = await executeWithOffline();
-      success = true;
-      statusCode = 200;
-      return result;
     } catch (error) {
       if (error instanceof ApiError && error.statusCode !== undefined) {
         statusCode = error.statusCode;
@@ -630,13 +606,20 @@ export class HttpClient {
    */
   private async sendWithRetries<T>(path: string, options: RequestOptions): Promise<T> {
     const url = `${this.baseUrl}${path}`;
-    const headers = { ...this.defaultHeaders, ...options.headers };
+    let headers = { ...this.defaultHeaders, ...options.headers };
+    const serializedBody = options.body ? this.serializer.serialize(options.body) : undefined;
+    let requestBody: BodyInit | undefined;
+    if (serializedBody !== undefined) {
+      const preparedBody = await prepareRequestBody(serializedBody, headers, this.compression);
+      headers = preparedBody.headers;
+      requestBody = preparedBody.body;
+    }
 
     // Apply proxy configuration if set
     const fetchOptions: RequestInit = {
       method: options.method,
       headers,
-      body: options.body ? this.serializer.serialize(options.body) : undefined,
+      body: requestBody,
       signal: options.signal
         ? AbortSignal.any([options.signal, AbortSignal.timeout(options.timeout ?? this.timeout)])
         : AbortSignal.timeout(options.timeout ?? this.timeout),
@@ -667,7 +650,7 @@ export class HttpClient {
     for (let attempt = 0; attempt < attempts; attempt++) {
       let release: (() => void) | undefined;
       try {
-        release = await this.connectionPool.acquire(options.signal);
+        release = await this.connectionPool.acquire();
         const startedAt = Date.now();
         this.logger('[DORISIO] request', {
           method: options.method,
@@ -1005,9 +988,5 @@ export class HttpClient {
    */
   getTracingProvider() {
     return getTracingProvider();
-  }
-
-  private log(message: string, data: unknown): void {
-    if (this.debug) this.logger(message, data);
   }
 }
