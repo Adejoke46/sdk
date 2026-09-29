@@ -9,6 +9,7 @@
 import { ApiError, DorisioError, ErrorHandler, ErrorHandlerContext } from '../types';
 import { InterceptorManager } from './interceptors';
 import { generateRequestId, isRequestIdempotent, RetryConflictError } from './retry-manager';
+import { CircuitBreaker, type CircuitBreakerConfig, CircuitOpenError } from './circuit-breaker';
 import { MockRouter, type SandboxHistoryEntry } from '../sandbox/mock-router';
 import { RequestQueue } from './request-queue';
 import { OfflineQueue } from './offline-queue';
@@ -111,6 +112,8 @@ export interface HttpClientOptions {
   hookManager?: HookManager;
   /** Proxy configuration */
   proxy?: ProxyConfig;
+  /** Circuit breaker configuration for failing endpoints */
+  circuitBreaker?: CircuitBreakerConfig;
 }
 
 export interface ProxyConfig {
@@ -221,6 +224,7 @@ export class HttpClient {
   private hookManager?: HookManager;
   private proxy?: ProxyConfig;
   private streamHandler: StreamHandler;
+  private circuitBreaker?: CircuitBreaker;
 
   constructor(baseUrl: string, options?: HttpClientOptions) {
     this.baseUrl = baseUrl.replace(/\/$/, '');
@@ -288,6 +292,10 @@ export class HttpClient {
     this.hookManager = options?.hookManager;
     this.proxy = options?.proxy;
     this.streamHandler = new StreamHandler();
+
+    if (options?.circuitBreaker) {
+      this.circuitBreaker = new CircuitBreaker(options.circuitBreaker);
+    }
   }
 
   /**
@@ -379,6 +387,13 @@ export class HttpClient {
     return this.connectionPool.stats();
   }
 
+  /**
+   * Get the circuit breaker instance if configured
+   */
+  getCircuitBreaker(): CircuitBreaker | undefined {
+    return this.circuitBreaker;
+  }
+
   configureSandbox(options: {
     seed?: number;
     latency?: number;
@@ -438,6 +453,11 @@ export class HttpClient {
         if (cached) this.deduplicationCache.delete(key);
       }
 
+      // Fail fast when the circuit for this endpoint is open.
+      if (this.circuitBreaker) {
+        this.circuitBreaker.assertCanRequest(path);
+      }
+
       try {
         // Throttle before making request
         if (this.throttleManager) {
@@ -485,6 +505,13 @@ export class HttpClient {
           try {
             return await this.sendWithRetries<T>(path, finalOptions);
           } catch (error) {
+            if (this.circuitBreaker && !(error instanceof CircuitOpenError)) {
+              if (error instanceof ApiError && error.statusCode !== undefined && error.statusCode < 500) {
+                this.circuitBreaker.recordSuccess(path);
+              } else {
+                this.circuitBreaker.recordFailure(path);
+              }
+            }
             if (!this.canRecoverFrom(error, path, finalOptions)) throw error;
             try {
               await this.refreshSessionOnce();
@@ -494,6 +521,9 @@ export class HttpClient {
             return await this.sendWithRetries<T>(path, finalOptions);
           }
         });
+        if (this.circuitBreaker) {
+          this.circuitBreaker.recordSuccess(path);
+        }
         return result;
       } finally {
         this.inFlightRequests.delete(requestId);
