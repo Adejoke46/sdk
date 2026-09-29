@@ -17,10 +17,10 @@ describe('Verification Methods', () => {
       request: mockRequest,
     } as any;
 
-    client.verifyCreator = VerificationMethods.verifyCreator.bind(client as any);
+    client.verifyCreator = VerificationMethods.verifyCreator.bind(client as any) as any;
     client.requestCreatorVerification = VerificationMethods.requestCreatorVerification.bind(client);
     client.getCreatorVerificationStatus = VerificationMethods.getCreatorVerificationStatus.bind(client);
-    client.verifyWallet = VerificationMethods.verifyWallet.bind(client);
+    client.verifyWallet = VerificationMethods.verifyWallet.bind(client as any) as any;
     client.getWalletVerificationStatus = VerificationMethods.getWalletVerificationStatus.bind(client);
     client.requestWalletVerificationChallenge =
       VerificationMethods.requestWalletVerificationChallenge.bind(client);

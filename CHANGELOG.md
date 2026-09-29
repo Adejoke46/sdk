@@ -1,9 +1,17 @@
-﻿# Changelog
+# Changelog
 
 All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+### Added
+
+- Custom serialization/deserialization support with pluggable `Serializer` interface
+- Multi-region failover and round-robin load balancing via `FailoverManager`
+- Comprehensive SDK testing guide (`docs/TESTING.md`)
 
 ## [0.1.0] - 2026-09-11
 
@@ -77,16 +85,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - README documentation for vanilla and React examples
 - Type inference helpers (e.g., `CreateTipInput`, `TransactionDetails`)
 
-### Features Highlights
-
-✨ **Production-Ready Signals**:
-
-- Idempotency support prevents double-charging on retry
-- Domain-specific error types enable precise error handling
-- Webhook verification for async event processing
-- Exported schemas enable consumer-side validation
-- Security-first approach (constant-time comparison, proper error propagation)
-
 ### Dependencies
 
 - `@stellar/stellar-sdk`: ^12.0.0
@@ -99,12 +97,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - React: >=18.0.0 (optional)
 - Browsers: Modern ES2020+ support required
 
-### Documentation
+### Security Considerations
 
-- Full TypeScript definitions included
-- JSDoc comments throughout codebase
-- Example integrations in `examples/` directory
-- README documentation for each module
+- Always use HTTPS in production
+- Store API credentials securely (env variables)
+- Validate webhook signatures before processing
+- Use unique idempotency keys per transaction attempt
+- Never expose private keys in client code
 
 ---
 
@@ -122,14 +121,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Async event webhooks require backend implementation
 - Stellar network operations use testnet by default
 - React components are presentational (styling customizable)
-
-### Security Considerations
-
-- Always use HTTPS in production
-- Store API credentials securely (env variables)
-- Validate webhook signatures before processing
-- Use unique idempotency keys per transaction attempt
-- Never expose private keys in client code
 
 ### Breaking Changes
 

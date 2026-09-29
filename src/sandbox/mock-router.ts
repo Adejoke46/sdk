@@ -113,6 +113,11 @@ export class MockRouter {
   private route(method: string, path: string, body: unknown, seed: number): unknown {
     const clean = path.split('?')[0] ?? path;
 
+    // GraphQL queries & mutations
+    if (clean.includes('/graphql') && method === 'POST') {
+      return this.routeGraphQL(body, seed);
+    }
+
     // Tips / transactions (api/v1 and bare paths)
     if (clean.includes('/transactions/tip') && method === 'POST') {
       return MockData.generateMockTip(seed, body as Record<string, unknown> | undefined);
@@ -244,5 +249,113 @@ export class MockRouter {
 
     // Generic fallback — still deterministic
     return MockData.generateMockGeneric(seed, method, clean, body);
+  }
+
+  private routeGraphQL(body: unknown, seed: number): unknown {
+    const payload = body as
+      | { query?: string; variables?: Record<string, unknown>; operationName?: string }
+      | undefined;
+    const query = payload?.query ?? '';
+    const op = payload?.operationName ?? '';
+    const vars = payload?.variables ?? {};
+
+    if (/mutation\s+CreateTip|createTip\s*\(/i.test(query) || op === 'CreateTip') {
+      return {
+        createTip: MockData.generateMockTip(seed, vars.input as Record<string, unknown> | undefined),
+      };
+    }
+
+    if (/GetCreatorProfile|creatorProfile\s*\(/i.test(query) || op === 'GetCreatorProfile') {
+      const creator = MockData.generateMockCreator(seed);
+      return {
+        creatorProfile: {
+          ...creator,
+          stats: {
+            totalTips: Math.floor(MockData.seededRandom(seed + 1) * 100),
+            averageTip: Math.floor(MockData.seededRandom(seed + 2) * 50) + 5,
+            lastTipDate: new Date().toISOString(),
+          },
+        },
+      };
+    }
+
+    if (/GetCreatorWithUser/i.test(query) || (query.includes('creator') && query.includes('user {'))) {
+      const creator = MockData.generateMockCreator(seed);
+      const user = MockData.generateMockUser(seed);
+      return {
+        creator: {
+          ...creator,
+          user,
+        },
+      };
+    }
+
+    if (/GetCreator\b|creator\s*\(/i.test(query) || op === 'GetCreator' || op === 'GetCreatorCustom') {
+      return {
+        creator: MockData.generateMockCreator(seed),
+      };
+    }
+
+    if (/ListCreators\b|creators\s*\(/i.test(query) || op === 'ListCreators' || op === 'ListCreatorsCustom') {
+      const mockCreators = MockData.generateMockCreators({ seed });
+      return {
+        creators: {
+          creators: mockCreators.creators,
+          total: mockCreators.total,
+          page: mockCreators.page,
+          pageSize: mockCreators.pageSize,
+        },
+      };
+    }
+
+    if (/GetTransactionWithDetails/i.test(query) || (query.includes('transaction') && query.includes('fromUser {'))) {
+      const tx = MockData.generateMockTransaction(seed);
+      const user = MockData.generateMockUser(seed);
+      const creator = MockData.generateMockCreator(seed);
+      return {
+        transaction: {
+          ...tx,
+          fromUser: user,
+          creator,
+        },
+      };
+    }
+
+    if (
+      /GetTransactionHistory\b|transactionHistory\s*\(/i.test(query) ||
+      op === 'GetTransactionHistory' ||
+      op === 'GetTransactionHistoryCustom'
+    ) {
+      const history = MockData.generateMockTransactionHistory({ seed });
+      return {
+        transactionHistory: history,
+      };
+    }
+
+    if (/GetTransaction\b|transaction\s*\(/i.test(query) || op === 'GetTransaction' || op === 'GetTransactionCustom') {
+      return {
+        transaction: MockData.generateMockTransaction(seed),
+      };
+    }
+
+    if (/GetWallets\b|wallets\s*\(/i.test(query) || op === 'GetWallets') {
+      const wallets = [MockData.generateMockWallet(seed), MockData.generateMockWallet(seed + 1)];
+      return {
+        wallets: {
+          wallets,
+          total: wallets.length,
+          page: 1,
+          pageSize: 10,
+        },
+      };
+    }
+
+    if (/GetWallet\b|wallet\s*\(/i.test(query) || op === 'GetWallet') {
+      return {
+        wallet: MockData.generateMockWallet(seed),
+      };
+    }
+
+    return MockData.generateMockGeneric(seed, 'POST', '/graphql', body);
   }
 }
