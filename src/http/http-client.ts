@@ -15,6 +15,8 @@ import { OfflineQueue } from './offline-queue';
 import { MetricsCollector, type MetricsSummary, type MetricsCallback } from '../lib/metrics';
 import { ThrottleManager } from './throttle-manager';
 import { HookManager, type HookContext, type ResponseContext } from '../lib/hooks';
+import { StreamHandler, type StreamOptions, type StreamResult, isLargeResponse } from './stream-handler';
+import { getTracingProvider, SpanStatus } from '../lib/telemetry';
 
 export type HttpClientMode = 'live' | 'sandbox' | 'production';
 
@@ -46,6 +48,15 @@ export interface RequestOptions {
    * Optional name of the calling SDK method for logging / diagnostics.
    */
   methodName?: string;
+  /**
+   * Enable streaming mode for large responses. Allows processing chunks
+   * without loading entire response into memory.
+   */
+  streaming?: boolean;
+  /**
+   * Streaming options for chunk handling and progress tracking
+   */
+  streamOptions?: StreamOptions;
 }
 
 export interface HttpClientOptions {
@@ -209,6 +220,7 @@ export class HttpClient {
   private throttleManager?: ThrottleManager;
   private hookManager?: HookManager;
   private proxy?: ProxyConfig;
+  private streamHandler: StreamHandler;
 
   constructor(baseUrl: string, options?: HttpClientOptions) {
     this.baseUrl = baseUrl.replace(/\/$/, '');
@@ -275,6 +287,7 @@ export class HttpClient {
 
     this.hookManager = options?.hookManager;
     this.proxy = options?.proxy;
+    this.streamHandler = new StreamHandler();
   }
 
   /**
@@ -877,6 +890,121 @@ export class HttpClient {
    */
   getOfflineQueueSize(): number {
     return this.offlineQueue ? this.offlineQueue.getQueueSize() : 0;
+  }
+
+  /**
+   * Make a streaming HTTP request
+   *
+   * Processes large responses in chunks to reduce memory usage.
+   * Useful for large file downloads or streaming APIs.
+   *
+   * @param path - Request path
+   * @param options - Request options with streaming configuration
+   * @returns Promise resolving to stream result
+   */
+  async requestStreaming(path: string, options: RequestOptions & { streamOptions: StreamOptions }): Promise<StreamResult> {
+    if (!options.streamOptions) {
+      throw new Error('streamOptions is required for streaming requests');
+    }
+
+    const methodName = options.methodName || 'requestStreaming';
+    this.log(`${methodName}: ${options.method} ${path}`, { streaming: true });
+
+    try {
+      // Build full URL
+      const url = `${this.baseUrl}${path}`;
+      const headers = {
+        ...this.defaultHeaders,
+        ...options.headers,
+      };
+
+      // Make the actual fetch request
+      const response = await fetch(url, {
+        method: options.method,
+        headers,
+        body: options.body ? JSON.stringify(options.body) : undefined,
+        signal: options.signal,
+      });
+
+      // Check if response is ok
+      if (!response.ok) {
+        throw new ApiError(
+          `HTTP ${response.status}: ${response.statusText}`,
+          response.status,
+          await response.text(),
+        );
+      }
+
+      // Determine if we should use streaming based on response size
+      const shouldStream = options.streaming !== false && isLargeResponse(response);
+
+      if (!shouldStream) {
+        this.log(`${methodName}: Response below streaming threshold, using standard processing`);
+      }
+
+      // Process the streaming response
+      const result = await this.streamHandler.processStream(response, options.streamOptions);
+
+      this.log(`${methodName}: Streaming completed`, {
+        totalBytes: result.totalBytes,
+        chunksProcessed: result.chunksProcessed,
+        durationMs: result.duration,
+      });
+
+      return result;
+    } catch (error) {
+      this.log(`${methodName}: Streaming failed`, { error: String(error) });
+      throw error;
+    }
+  }
+
+  /**
+   * Make a traced HTTP request with OpenTelemetry support
+   *
+   * Wraps the standard request with distributed tracing spans.
+   *
+   * @param path - Request path
+   * @param options - Request options
+   * @returns Promise with traced response
+   */
+  async requestWithTracing<T>(path: string, options: RequestOptions): Promise<T> {
+    const tracingProvider = getTracingProvider();
+    const operationName = `${options.method} ${path}`;
+    const span = tracingProvider.startSpan(operationName, {
+      'http.method': options.method,
+      'http.url': path,
+      'span.kind': 'client',
+    });
+
+    try {
+      const startTime = Date.now();
+      const result = await this.request<T>(path, options);
+
+      const duration = Date.now() - startTime;
+      span.setAttributes({
+        'http.response.body.size': JSON.stringify(result).length,
+        'http.client.duration': duration,
+        'span.status': 'success',
+      });
+      span.setStatus(SpanStatus.Ok);
+
+      return result;
+    } catch (error) {
+      span.setStatus(SpanStatus.Error, error instanceof Error ? error.message : String(error));
+      if (error instanceof Error) {
+        span.recordException(error);
+      }
+      throw error;
+    } finally {
+      tracingProvider.endSpan(span);
+    }
+  }
+
+  /**
+   * Get tracing provider instance
+   */
+  getTracingProvider() {
+    return getTracingProvider();
   }
 
   private log(message: string, data: unknown): void {

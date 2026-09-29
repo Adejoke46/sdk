@@ -49,6 +49,9 @@ import {
   ErrorHandler,
   Middleware,
 } from './types/errors';
+import { TelemetryClient, type TelemetryConfig } from './telemetry';
+import { PluginSystem, type Plugin } from './lib/plugin-system';
+import { initializeTracing, getTracingProvider } from './lib/telemetry';
 import type { MetricsCallback, MetricsSummary } from './lib/metrics';
 import type { OfflineEventType, OfflineEventListener } from './http/offline-queue';
 import {
@@ -106,6 +109,8 @@ export interface ClientConfig {
   throttleWindowMs?: number;
   /** Proxy configuration for corporate environments */
   proxy?: ProxyConfig;
+  /** Telemetry configuration for usage analytics */
+  telemetry?: TelemetryConfig;
 }
 
 function normalizeClientMode(mode?: ClientMode): 'live' | 'sandbox' {
@@ -142,6 +147,8 @@ export class DorisioClient {
   private apiVersionHandler: ApiVersionHandler;
   private errorReporter?: ErrorReporter;
   private hookManager: HookManager;
+  private telemetryClient?: TelemetryClient;
+  private pluginSystem: PluginSystem;
 
   constructor(config: ClientConfig) {
     const mode = normalizeClientMode(config.mode);
@@ -239,6 +246,14 @@ export class DorisioClient {
     this.httpClient.setTokenRefresher(async () => {
       await this.refreshSession();
     });
+
+    // Initialize telemetry if configured
+    if (config.telemetry && config.telemetry.enabled) {
+      this.telemetryClient = new TelemetryClient(config.telemetry);
+    }
+
+    // Initialize plugin system
+    this.pluginSystem = new PluginSystem();
   }
 
   /**
@@ -897,4 +912,134 @@ export class DorisioClient {
     fn: (item: T, index: number) => Promise<R>,
     options?: BatchProcessorOptions
   ) => Promise<BatchResult<T, R>>;
+
+  // ---------------------------------------------------------------------------
+  // Telemetry methods
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Get telemetry client instance
+   */
+  getTelemetryClient(): TelemetryClient | undefined {
+    return this.telemetryClient;
+  }
+
+  /**
+   * Enable telemetry collection
+   */
+  enableTelemetry(): void {
+    if (this.telemetryClient) {
+      this.telemetryClient.enable();
+    }
+  }
+
+  /**
+   * Disable telemetry collection
+   */
+  disableTelemetry(): void {
+    if (this.telemetryClient) {
+      this.telemetryClient.disable();
+    }
+  }
+
+  /**
+   * Flush pending telemetry events
+   */
+  async flushTelemetry(): Promise<void> {
+    if (this.telemetryClient) {
+      await this.telemetryClient.flush();
+    }
+  }
+
+  /**
+   * Shutdown telemetry client
+   */
+  async shutdownTelemetry(): Promise<void> {
+    if (this.telemetryClient) {
+      await this.telemetryClient.shutdown();
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Plugin system methods
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Install a plugin
+   */
+  async installPlugin(plugin: Plugin): Promise<void> {
+    await this.pluginSystem.install(plugin);
+  }
+
+  /**
+   * Uninstall a plugin
+   */
+  async uninstallPlugin(pluginName: string): Promise<void> {
+    await this.pluginSystem.uninstall(pluginName);
+  }
+
+  /**
+   * Get installed plugin by name
+   */
+  getPlugin(name: string): Plugin | undefined {
+    return this.pluginSystem.getPlugin(name);
+  }
+
+  /**
+   * Get all installed plugins
+   */
+  getPlugins(): Plugin[] {
+    return this.pluginSystem.getPlugins();
+  }
+
+  /**
+   * Check if plugin is installed
+   */
+  isPluginInstalled(name: string): boolean {
+    return this.pluginSystem.isPluginInstalled(name);
+  }
+
+  /**
+   * Get plugin system instance for advanced operations
+   */
+  getPluginSystem(): PluginSystem {
+    return this.pluginSystem;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Distributed Tracing methods
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Initialize OpenTelemetry tracer provider for distributed tracing
+   *
+   * @param tracerProvider - OpenTelemetry TracerProvider instance
+   */
+  initializeDistributedTracing(tracerProvider: any): void {
+    initializeTracing(tracerProvider);
+    this.log('Distributed tracing initialized', { tracerProvider: 'OpenTelemetry' });
+  }
+
+  /**
+   * Get tracing provider instance
+   *
+   * @returns Distributed tracing provider
+   */
+  getTracingProvider() {
+    return getTracingProvider();
+  }
+
+  /**
+   * Make a traced HTTP request
+   *
+   * @param path - Request path
+   * @param options - Request options
+   * @returns Promise with traced response
+   */
+  async requestWithTracing<T>(path: string, options: Partial<RequestOptions> = {}): Promise<T> {
+    return this.httpClient.requestWithTracing<T>(path, {
+      method: 'GET',
+      ...options,
+    } as RequestOptions);
+  }
 }
