@@ -49,6 +49,7 @@ import {
   ErrorHandler,
   Middleware,
 } from './types/errors';
+import { TelemetryClient, type TelemetryConfig } from './telemetry';
 import type { MetricsCallback, MetricsSummary } from './lib/metrics';
 import type { OfflineEventType, OfflineEventListener } from './http/offline-queue';
 import {
@@ -106,6 +107,8 @@ export interface ClientConfig {
   throttleWindowMs?: number;
   /** Proxy configuration for corporate environments */
   proxy?: ProxyConfig;
+  /** Telemetry configuration for usage analytics */
+  telemetry?: TelemetryConfig;
 }
 
 function normalizeClientMode(mode?: ClientMode): 'live' | 'sandbox' {
@@ -142,6 +145,7 @@ export class DorisioClient {
   private apiVersionHandler: ApiVersionHandler;
   private errorReporter?: ErrorReporter;
   private hookManager: HookManager;
+  private telemetryClient?: TelemetryClient;
 
   constructor(config: ClientConfig) {
     const mode = normalizeClientMode(config.mode);
@@ -239,6 +243,11 @@ export class DorisioClient {
     this.httpClient.setTokenRefresher(async () => {
       await this.refreshSession();
     });
+
+    // Initialize telemetry if configured
+    if (config.telemetry && config.telemetry.enabled) {
+      this.telemetryClient = new TelemetryClient(config.telemetry);
+    }
   }
 
   /**
@@ -897,4 +906,51 @@ export class DorisioClient {
     fn: (item: T, index: number) => Promise<R>,
     options?: BatchProcessorOptions
   ) => Promise<BatchResult<T, R>>;
+
+  // ---------------------------------------------------------------------------
+  // Telemetry methods
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Get telemetry client instance
+   */
+  getTelemetryClient(): TelemetryClient | undefined {
+    return this.telemetryClient;
+  }
+
+  /**
+   * Enable telemetry collection
+   */
+  enableTelemetry(): void {
+    if (this.telemetryClient) {
+      this.telemetryClient.enable();
+    }
+  }
+
+  /**
+   * Disable telemetry collection
+   */
+  disableTelemetry(): void {
+    if (this.telemetryClient) {
+      this.telemetryClient.disable();
+    }
+  }
+
+  /**
+   * Flush pending telemetry events
+   */
+  async flushTelemetry(): Promise<void> {
+    if (this.telemetryClient) {
+      await this.telemetryClient.flush();
+    }
+  }
+
+  /**
+   * Shutdown telemetry client
+   */
+  async shutdownTelemetry(): Promise<void> {
+    if (this.telemetryClient) {
+      await this.telemetryClient.shutdown();
+    }
+  }
 }
