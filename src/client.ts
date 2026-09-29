@@ -198,6 +198,10 @@ export class DorisioClient {
         logger: config.logger,
       });
 
+    this.analytics = new Analytics(
+      config.analytics === false ? { enabled: false } : config.analytics
+    );
+
     this.httpClient = new HttpClient(this.config.baseUrl, {
       timeout: this.config.timeout,
       retryAttempts: getConfig().retryAttempts,
