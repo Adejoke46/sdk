@@ -16,6 +16,7 @@ import { MetricsCollector, type MetricsSummary, type MetricsCallback } from '../
 import { ThrottleManager } from './throttle-manager';
 import { HookManager, type HookContext, type ResponseContext } from '../lib/hooks';
 import { StreamHandler, type StreamOptions, type StreamResult, isLargeResponse } from './stream-handler';
+import { getTracingProvider, SpanStatus } from '../lib/telemetry';
 
 export type HttpClientMode = 'live' | 'sandbox' | 'production';
 
@@ -955,6 +956,55 @@ export class HttpClient {
       this.log(`${methodName}: Streaming failed`, { error: String(error) });
       throw error;
     }
+  }
+
+  /**
+   * Make a traced HTTP request with OpenTelemetry support
+   *
+   * Wraps the standard request with distributed tracing spans.
+   *
+   * @param path - Request path
+   * @param options - Request options
+   * @returns Promise with traced response
+   */
+  async requestWithTracing<T>(path: string, options: RequestOptions): Promise<T> {
+    const tracingProvider = getTracingProvider();
+    const operationName = `${options.method} ${path}`;
+    const span = tracingProvider.startSpan(operationName, {
+      'http.method': options.method,
+      'http.url': path,
+      'span.kind': 'client',
+    });
+
+    try {
+      const startTime = Date.now();
+      const result = await this.request<T>(path, options);
+
+      const duration = Date.now() - startTime;
+      span.setAttributes({
+        'http.response.body.size': JSON.stringify(result).length,
+        'http.client.duration': duration,
+        'span.status': 'success',
+      });
+      span.setStatus(SpanStatus.Ok);
+
+      return result;
+    } catch (error) {
+      span.setStatus(SpanStatus.Error, error instanceof Error ? error.message : String(error));
+      if (error instanceof Error) {
+        span.recordException(error);
+      }
+      throw error;
+    } finally {
+      tracingProvider.endSpan(span);
+    }
+  }
+
+  /**
+   * Get tracing provider instance
+   */
+  getTracingProvider() {
+    return getTracingProvider();
   }
 
   private log(message: string, data: unknown): void {

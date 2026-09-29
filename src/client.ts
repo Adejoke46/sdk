@@ -51,6 +51,7 @@ import {
 } from './types/errors';
 import { TelemetryClient, type TelemetryConfig } from './telemetry';
 import { PluginSystem, type Plugin } from './lib/plugin-system';
+import { initializeTracing, getTracingProvider } from './lib/telemetry';
 import type { MetricsCallback, MetricsSummary } from './lib/metrics';
 import type { OfflineEventType, OfflineEventListener } from './http/offline-queue';
 import {
@@ -1003,5 +1004,42 @@ export class DorisioClient {
    */
   getPluginSystem(): PluginSystem {
     return this.pluginSystem;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Distributed Tracing methods
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Initialize OpenTelemetry tracer provider for distributed tracing
+   *
+   * @param tracerProvider - OpenTelemetry TracerProvider instance
+   */
+  initializeDistributedTracing(tracerProvider: any): void {
+    initializeTracing(tracerProvider);
+    this.log('Distributed tracing initialized', { tracerProvider: 'OpenTelemetry' });
+  }
+
+  /**
+   * Get tracing provider instance
+   *
+   * @returns Distributed tracing provider
+   */
+  getTracingProvider() {
+    return getTracingProvider();
+  }
+
+  /**
+   * Make a traced HTTP request
+   *
+   * @param path - Request path
+   * @param options - Request options
+   * @returns Promise with traced response
+   */
+  async requestWithTracing<T>(path: string, options: Partial<RequestOptions> = {}): Promise<T> {
+    return this.httpClient.requestWithTracing<T>(path, {
+      method: 'GET',
+      ...options,
+    } as RequestOptions);
   }
 }
