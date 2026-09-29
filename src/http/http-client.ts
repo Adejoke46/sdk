@@ -15,7 +15,12 @@ import { OfflineQueue } from './offline-queue';
 import { MetricsCollector, type MetricsSummary, type MetricsCallback } from '../lib/metrics';
 import { ThrottleManager } from './throttle-manager';
 import { HookManager, type HookContext, type ResponseContext } from '../lib/hooks';
-import { StreamHandler, type StreamOptions, type StreamResult, isLargeResponse } from './stream-handler';
+import {
+  StreamHandler,
+  type StreamOptions,
+  type StreamResult,
+  isLargeResponse,
+} from './stream-handler';
 import { getTracingProvider, SpanStatus } from '../lib/telemetry';
 
 export type HttpClientMode = 'live' | 'sandbox' | 'production';
@@ -166,7 +171,10 @@ function stableSerialize(value: unknown): string {
   if (value && typeof value === 'object') {
     return `{${Object.keys(value as Record<string, unknown>)
       .sort()
-      .map((key) => `${JSON.stringify(key)}:${stableSerialize((value as Record<string, unknown>)[key])}`)
+      .map(
+        (key) =>
+          `${JSON.stringify(key)}:${stableSerialize((value as Record<string, unknown>)[key])}`
+      )
       .join(',')}}`;
   }
   return JSON.stringify(value) ?? 'null';
@@ -379,11 +387,7 @@ export class HttpClient {
     return this.connectionPool.stats();
   }
 
-  configureSandbox(options: {
-    seed?: number;
-    latency?: number;
-    errorRate?: number;
-  }): void {
+  configureSandbox(options: { seed?: number; latency?: number; errorRate?: number }): void {
     if (options.seed !== undefined) this.mockRouter.setSeed(options.seed);
     if (options.latency !== undefined) this.mockRouter.setLatency(options.latency);
     if (options.errorRate !== undefined) this.mockRouter.setErrorRate(options.errorRate);
@@ -424,20 +428,6 @@ export class HttpClient {
     this.inFlightRequests.add(requestId);
 
     const executeInternal = async (): Promise<T> => {
-      const seeded: RequestOptions = {
-        ...options,
-        requestId,
-        headers: withRequestIdHeader(options.headers, requestId),
-      };
-      const finalOptions = await this.interceptors.executeRequestInterceptors(seeded);
-
-      const key = `${finalOptions.method}:${path}:${stableSerialize(finalOptions.body ?? null)}`;
-      if (this.deduplicateRequests) {
-        const cached = this.deduplicationCache.get(key);
-        if (cached && cached.expiresAt > Date.now()) return cached.promise as Promise<T>;
-        if (cached) this.deduplicationCache.delete(key);
-      }
-
       try {
         // Throttle before making request
         if (this.throttleManager) {
@@ -455,7 +445,11 @@ export class HttpClient {
         };
         if (this.hookManager) {
           hookCtx = await this.hookManager.executeBeforeRequest(hookCtx);
-          options = { ...options, body: hookCtx.body as Record<string, unknown>, headers: hookCtx.headers };
+          options = {
+            ...options,
+            body: hookCtx.body as Record<string, unknown>,
+            headers: hookCtx.headers,
+          };
         }
 
         const seeded: RequestOptions = {
@@ -479,7 +473,11 @@ export class HttpClient {
 
         const result = await this.executeDeduplication<T>(key, async () => {
           if (this.mode === 'sandbox') {
-            const mocked = await this.mockRouter.handle(finalOptions.method, path, finalOptions.body);
+            const mocked = await this.mockRouter.handle(
+              finalOptions.method,
+              path,
+              finalOptions.body
+            );
             return (await this.interceptors.executeResponseInterceptors(mocked)) as T;
           }
           try {
@@ -498,27 +496,6 @@ export class HttpClient {
       } finally {
         this.inFlightRequests.delete(requestId);
       }
-    };
-
-    const executeWithQueue = (): Promise<T> => {
-      if (this.requestQueue) {
-        return this.requestQueue.enqueue(executeInternal);
-      }
-      return executeInternal();
-    };
-
-    const executeWithOffline = (): Promise<T> => {
-      if (this.offlineQueue) {
-        return this.offlineQueue.handleRequest(options.method, path, executeWithQueue);
-      }
-      return executeWithQueue();
-    };
-
-    try {
-      const result = await executeWithOffline();
-      success = true;
-      statusCode = 200;
-      return result;
     };
 
     const executeWithQueue = (): Promise<T> => {
@@ -586,11 +563,7 @@ export class HttpClient {
   /**
    * Whether a failed request is worth a token refresh + replay.
    */
-  private canRecoverFrom(
-    error: unknown,
-    path: string,
-    options: RequestOptions
-  ): boolean {
+  private canRecoverFrom(error: unknown, path: string, options: RequestOptions): boolean {
     if (!this.tokenRefresher) {
       return false;
     }
@@ -646,7 +619,9 @@ export class HttpClient {
     if (this.proxy?.url && typeof globalThis.process !== 'undefined') {
       try {
         // Dynamic import to avoid bundling undici in browser builds
-        const undici = await (Function('return import("undici")')() as Promise<typeof import('undici')>);
+        const undici = await (Function('return import("undici")')() as Promise<
+          typeof import('undici')
+        >);
         (fetchOptions as Record<string, unknown>).dispatcher = new undici.ProxyAgent({
           uri: this.proxy.url,
           requestTls: { rejectUnauthorized: this.proxy.rejectUnauthorized ?? true },
@@ -693,11 +668,15 @@ export class HttpClient {
           let error: Record<string, unknown> = {};
           try {
             const errorText = await response.text();
-            error = errorText ? this.serializer.deserialize<Record<string, unknown>>(errorText) : {};
+            error = errorText
+              ? this.serializer.deserialize<Record<string, unknown>>(errorText)
+              : {};
           } catch {
             // Fallback for mocks that only implement json()
             try {
-              error = await (response as { json?: () => Promise<Record<string, unknown>> }).json?.() ?? {};
+              error =
+                (await (response as { json?: () => Promise<Record<string, unknown>> }).json?.()) ??
+                {};
             } catch {
               // ignore
             }
@@ -730,7 +709,7 @@ export class HttpClient {
           data = this.serializer.deserialize<T>(text);
         } catch {
           // Fallback for mocks that only implement json()
-          data = await (response as { json?: () => Promise<T> }).json?.() ?? (undefined as T);
+          data = (await (response as { json?: () => Promise<T> }).json?.()) ?? (undefined as T);
         }
 
         return await this.interceptors.executeResponseInterceptors(data);
@@ -902,7 +881,10 @@ export class HttpClient {
    * @param options - Request options with streaming configuration
    * @returns Promise resolving to stream result
    */
-  async requestStreaming(path: string, options: RequestOptions & { streamOptions: StreamOptions }): Promise<StreamResult> {
+  async requestStreaming(
+    path: string,
+    options: RequestOptions & { streamOptions: StreamOptions }
+  ): Promise<StreamResult> {
     if (!options.streamOptions) {
       throw new Error('streamOptions is required for streaming requests');
     }
@@ -931,7 +913,7 @@ export class HttpClient {
         throw new ApiError(
           `HTTP ${response.status}: ${response.statusText}`,
           response.status,
-          await response.text(),
+          await response.text()
         );
       }
 
