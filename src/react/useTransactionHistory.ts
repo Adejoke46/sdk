@@ -105,14 +105,6 @@ export function useTransactionHistory(
     };
   }, []);
 
-  const withAbort = <T>(fn: (signal: AbortSignal) => Promise<T>): Promise<T> => {
-    const controller = new AbortController();
-    abortControllersRef.current.add(controller);
-    return fn(controller.signal).finally(() => {
-      abortControllersRef.current.delete(controller);
-    });
-  };
-
   const safeSetState = useCallback(
     (fn: React.SetStateAction<UseTransactionHistoryState>) => {
       if (!isMountedRef.current) return;
@@ -162,17 +154,18 @@ export function useTransactionHistory(
           abortRef.current?.abort();
           const controller = new AbortController();
           abortRef.current = controller;
+          abortControllersRef.current.add(controller);
           const isStale = () => requestId !== requestIdRef.current;
 
-          const current = stateRef.current;
-          const page = options?.page ?? current.page;
-          const pageSize = options?.pageSize ?? current.pageSize;
-          // Explicit `undefined` clears creator filter; omit to keep last creatorId.
-          const resolvedCreator = creator !== undefined ? creator : creatorIdRef.current;
-          const endpoint = resolvedCreator
-            ? `/api/v1/transactions/creator/${resolvedCreator}`
-            : '/api/v1/transactions/history';
-          const query = `?page=${page}&pageSize=${pageSize}`;
+            const current = stateRef.current;
+            const page = options?.page ?? current.page;
+            const pageSize = options?.pageSize ?? current.pageSize;
+            // Explicit `undefined` clears creator filter; omit to keep last creatorId.
+            const resolvedCreator = creator !== undefined ? creator : creatorIdRef.current;
+            const endpoint = resolvedCreator
+              ? `/api/v1/transactions/creator/${resolvedCreator}`
+              : '/api/v1/transactions/history';
+            const query = `?page=${page}&pageSize=${pageSize}`;
 
           let response;
           try {
@@ -180,12 +173,17 @@ export function useTransactionHistory(
               signal: controller.signal,
             });
           } catch (err) {
+            if (controller.signal.aborted && !isMountedRef.current) {
+              throw err;
+            }
             // A superseded request's failure (including its own abort) is
             // not an error — silently keep current state.
             if (isStale()) return stateRef.current.transactions;
             throw err;
+          } finally {
+            abortControllersRef.current.delete(controller);
           }
-          if (isStale()) return stateRef.current.transactions;
+          if (isMountedRef.current && isStale()) return stateRef.current.transactions;
 
           if (!response.success || !response.data) {
             throw new Error(response.error?.message || 'Failed to fetch transaction history');
@@ -216,7 +214,7 @@ export function useTransactionHistory(
           creatorIdRef.current = resolvedCreator;
 
           return transactions;
-        }
+        })
       ),
     [client, setError, setIsLoading, safeSetState]
   );

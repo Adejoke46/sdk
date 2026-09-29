@@ -10,15 +10,57 @@ export const SDK_VERSION = '0.1.0';
 // Re-export client and utilities
 export { DorisioClient, type ClientConfig } from './client';
 
+// Re-export GraphQL client and queries
+export {
+  GraphQLClient,
+  GraphQLCache,
+  GraphQLError,
+  type GraphQLClientConfig,
+  type GraphQLRequestOptions,
+  type GraphQLResponse,
+  type GraphQLErrorItem,
+  type GraphQLErrorLocation,
+  type GraphQLCacheOptions,
+  type CacheEntry,
+} from './graphql/graphql-client';
+export {
+  GET_CREATOR,
+  GET_CREATOR_WITH_USER,
+  LIST_CREATORS,
+  GET_CREATOR_PROFILE,
+  GET_TRANSACTION,
+  GET_TRANSACTION_WITH_DETAILS,
+  GET_TRANSACTION_HISTORY,
+  GET_WALLET,
+  GET_WALLETS,
+  CREATE_TIP,
+  buildCreatorQuery,
+  buildListCreatorsQuery,
+  buildTransactionQuery,
+  buildTransactionHistoryQuery,
+  buildCustomQuery,
+} from './graphql/queries';
+
 // Re-export HTTP interceptors (public API for custom middleware)
+export {
+  ApiVersionHandler,
+  type ApiVersionHandlerOptions,
+  type DeprecationWarning,
+  type DeprecatedEndpointConfig,
+  type RequestMigrationContext,
+  type VersionMigration,
+} from './http/api-version-handler';
 export { InterceptorManager } from './http/interceptors';
 export type {
   RequestInterceptor,
   ResponseInterceptor,
   ErrorInterceptor,
 } from './http/interceptors';
-export type { RequestOptions } from './http/http-client';
+export type { RequestOptions, HttpClientOptions, HttpClientMode } from './http/http-client';
+export { HttpClient } from './http/http-client';
 export { RequestQueue, type RequestQueueOptions } from './http/request-queue';
+export { RequestSigner, type RequestSignerOptions } from './http/request-signer';
+export { ConnectionPool, type ConnectionPoolOptions, type ConnectionPoolStats } from './http/connection-pool';
 export {
   OfflineQueue,
   type OfflineQueueOptions,
@@ -26,6 +68,15 @@ export {
   type OfflineEventListener,
   type QueueProcessedResult,
 } from './http/offline-queue';
+export {
+  FailoverManager,
+  type EndpointConfig,
+  type FailoverManagerOptions,
+} from './http/failover-manager';
+export {
+  JsonSerializer,
+  type Serializer,
+} from './http/serializer';
 export {
   MetricsCollector,
   type MetricsCollectorOptions,
@@ -36,19 +87,64 @@ export {
   type MetricsCallback,
 } from './lib/metrics';
 
-// Re-export client-side analytics (Issue #60)
+// Re-export error reporter
 export {
-  Analytics,
-  percentile,
-  type AnalyticsOptions,
-  type AnalyticsEntry,
-  type AnalyticsEvent,
-  type AnalyticsListener,
-  type AnalyticsSnapshot,
-  type AnalyticsExportFormat,
-  type MethodAnalytics,
-  type ErrorPattern,
-} from './lib/analytics';
+  ConsoleErrorReporter,
+  NoopErrorReporter,
+  createErrorReporter,
+  type ErrorReporter,
+  type ErrorReporterOptions,
+  type ErrorReportEvent,
+  type UserContext,
+} from './lib/error-reporter';
+
+// Re-export hook system
+export {
+  HookManager,
+  type HookContext,
+  type ResponseContext,
+  type BeforeRequestHook,
+  type AfterRequestHook,
+  type BeforeResponseHook,
+  type AfterResponseHook,
+  type HookRegistration,
+} from './lib/hooks';
+
+// Re-export throttle manager
+export {
+  ThrottleManager,
+  type ThrottleManagerOptions,
+  type EndpointThrottleConfig,
+} from './http/throttle-manager';
+
+// Re-export proxy config type
+export type { ProxyConfig } from './http/http-client';
+
+// Re-export Sentry integration
+export {
+  SentryErrorReporter,
+  HttpSentryTransport,
+  createSentryReporter,
+  type SentryTransport,
+  type SentryEvent,
+} from './integrations/sentry';
+
+
+// Re-export real-time sync (Issue #58)
+export {
+  WebSocketClient,
+  ALL_CHANNELS,
+  type WebSocketClientOptions,
+  type WebSocketState,
+  type WebSocketLike,
+  type WebSocketFactory,
+  type RealtimeEvent,
+  type RealtimeListener,
+  type RealtimeFrame,
+  type RealtimeSource,
+  type RealtimeStateListener,
+  type PollingFallbackOptions,
+} from './websocket/websocket-client';
 
 // Re-export types
 export type { ApiResponse, PaginationMeta, PaginatedResponse } from './types/api';
@@ -65,6 +161,13 @@ export {
   WalletVerificationError,
   PaymentError,
   RateLimitError,
+} from './types/errors';
+export type {
+  ErrorHandler,
+  ErrorHandlerAction,
+  ErrorHandlerContext,
+  Middleware,
+  MiddlewareContext,
 } from './types/errors';
 
 // Re-export domain models
@@ -232,6 +335,11 @@ export {
   getCreators,
   getAllTransactionHistory,
   getAllWalletBalances,
+  getCreatorsBatch,
+  getWalletBalancesBatch,
+  createTipsBatch,
+  processBatchWithRetry,
+  retryBatch,
 } from './client/batch-operations';
 export type { VerificationStatus } from './client/verification';
 export type { SessionInfo } from './client/auth';

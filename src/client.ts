@@ -2,11 +2,13 @@
  * DorisioClient
  *
  * Main client for interacting with Dorisio backend API.
- * Handles authentication, request/response handling, and error management.
- * Supports sandbox/mock mode for offline testing without network calls.
+ * Handles authentication, request/response formatting, custom HTTP headers,
+ * batch processing with partial failure handling, request fingerprinting,
+ * performance metrics, offline/request queue management, and sandbox/mock mode.
  */
 
-import { HttpClient, RequestOptions, type HttpClientMode } from './http/http-client';
+import { HttpClient, RequestOptions, type HttpClientMode, type ProxyConfig } from './http/http-client';
+import { FailoverManager, type EndpointConfig } from './http/failover-manager';
 import { getConfig } from './config';
 import { ApiResponse } from './types/api';
 import {
@@ -38,16 +40,28 @@ import * as verificationMethods from './client/verification';
 import * as authMethods from './client/auth';
 import { CreateWalletRequest, UpdateWalletRequest } from './types/models';
 import * as batchMethods from './client/batch-operations';
+import { GraphQLClient } from './graphql/graphql-client';
+import {
+  BatchProcessorOptions,
+  BatchResult,
+} from './http/batch-processor';
 import {
   ErrorHandler,
   Middleware,
 } from './types/errors';
+import { TelemetryClient, type TelemetryConfig } from './telemetry';
+import { PluginSystem, type Plugin } from './lib/plugin-system';
+import { initializeTracing, getTracingProvider } from './lib/telemetry';
+import type { MetricsCallback, MetricsSummary } from './lib/metrics';
+import type { OfflineEventType, OfflineEventListener } from './http/offline-queue';
 import {
-  Analytics,
-  type AnalyticsOptions,
-  type AnalyticsListener,
-  type AnalyticsSnapshot,
-} from './lib/analytics';
+  ApiVersionHandler,
+  type DeprecationWarning,
+  type DeprecatedEndpointConfig,
+} from './http/api-version-handler';
+import type { ErrorReporter } from './lib/error-reporter';
+import { HookManager, type HookRegistration } from './lib/hooks';
+import { ThrottleManager } from './http/throttle-manager';
 
 export type ClientMode = 'sandbox' | 'live' | 'production';
 
@@ -66,17 +80,37 @@ export interface ClientConfig {
   sandboxLatency?: number;
   /** Sandbox random error rate 0–1 (default 0) */
   sandboxErrorRate?: number;
+  /** Emit sanitized request/response diagnostics through the configured logger */
   debug?: boolean;
   logger?: (message: string, data?: unknown) => void;
   deduplicateRequests?: boolean;
   deduplicationWindow?: number;
   /** Custom error handler for error recovery strategies */
   errorHandler?: ErrorHandler;
-  /**
-   * Client-side analytics tracking. Enabled by default; pass `false` to opt
-   * out entirely (useful for latency-critical or privacy-sensitive hosts).
-   */
-  analytics?: AnalyticsOptions | false;
+  /** Custom request ID generator for request fingerprinting */
+  requestIdGenerator?: () => string;
+  /** Enable request queue with concurrency control and automatic 429 backoff */
+  enableRequestQueue?: boolean;
+  /** Maximum concurrent requests in flight when request queue is enabled (default: 5) */
+  maxConcurrentRequests?: number;
+  /** Enable offline mutation queue */
+  enableOfflineQueue?: boolean;
+  /** Enable performance metrics collection */
+  enableMetrics?: boolean;
+  /** Optional callback invoked whenever a request metric is recorded */
+  metricsCallback?: MetricsCallback;
+  /** Error reporter instance for automatic error reporting */
+  errorReporter?: ErrorReporter;
+  /** Enable request throttling */
+  enableThrottling?: boolean;
+  /** Max requests per throttling window */
+  throttleMaxRequests?: number;
+  /** Throttling window in ms */
+  throttleWindowMs?: number;
+  /** Proxy configuration for corporate environments */
+  proxy?: ProxyConfig;
+  /** Telemetry configuration for usage analytics */
+  telemetry?: TelemetryConfig;
 }
 
 function normalizeClientMode(mode?: ClientMode): 'live' | 'sandbox' {
@@ -84,14 +118,37 @@ function normalizeClientMode(mode?: ClientMode): 'live' | 'sandbox' {
   return 'live';
 }
 
+/**
+ * DorisioClient provides a full suite of payment, wallet, creator, and transaction tools.
+ *
+ * @example
+ * ```ts
+ * import { DorisioClient } from 'dorisio-sdk';
+ *
+ * const client = new DorisioClient({
+ *   baseUrl: 'https://api.dorisio.com',
+ *   token: 'user_jwt_token',
+ * });
+ *
+ * const creator = await client.getCreator('creator-123', {
+ *   headers: { 'X-Custom-Header': 'custom-value' },
+ * });
+ * console.log(creator.name);
+ * ```
+ */
 export class DorisioClient {
+  public readonly graphql: GraphQLClient;
   private config: ClientConfig & { timeout: number; mode: 'live' | 'sandbox' };
   private httpClient: HttpClient;
   private token?: string;
   private mode: 'live' | 'sandbox';
   private errorHandler?: ErrorHandler;
   private middleware: Middleware[] = [];
-  private analytics: Analytics;
+  private apiVersionHandler: ApiVersionHandler;
+  private errorReporter?: ErrorReporter;
+  private hookManager: HookManager;
+  private telemetryClient?: TelemetryClient;
+  private pluginSystem: PluginSystem;
 
   constructor(config: ClientConfig) {
     const mode = normalizeClientMode(config.mode);
@@ -109,11 +166,37 @@ export class DorisioClient {
       deduplicateRequests: config.deduplicateRequests,
       deduplicationWindow: config.deduplicationWindow,
       errorHandler: config.errorHandler,
+      requestIdGenerator: config.requestIdGenerator,
+      enableRequestQueue: config.enableRequestQueue,
+      maxConcurrentRequests: config.maxConcurrentRequests,
+      enableOfflineQueue: config.enableOfflineQueue,
+      enableMetrics: config.enableMetrics,
+      metricsCallback: config.metricsCallback,
+      errorReporter: config.errorReporter,
+      enableThrottling: config.enableThrottling,
+      throttleMaxRequests: config.throttleMaxRequests,
+      throttleWindowMs: config.throttleWindowMs,
+      proxy: config.proxy,
     };
 
     this.token = config.token;
     this.mode = mode;
     this.errorHandler = config.errorHandler;
+    this.errorReporter = config.errorReporter;
+    this.hookManager = new HookManager();
+
+    this.apiVersionHandler =
+      config.apiVersionHandler ||
+      new ApiVersionHandler({
+        currentVersion: config.apiVersion || 'v1',
+        supportedVersions: config.supportedApiVersions,
+        fallbackVersion: config.fallbackApiVersion,
+        autoMigrate: config.autoMigrateApiVersion ?? true,
+        deprecatedEndpoints: config.deprecatedEndpoints,
+        onVersionChange: config.onApiVersionChange,
+        onDeprecation: config.onApiDeprecation,
+        logger: config.logger,
+      });
 
     this.analytics = new Analytics(
       config.analytics === false ? { enabled: false } : config.analytics
@@ -131,10 +214,33 @@ export class DorisioClient {
       deduplicateRequests: config.deduplicateRequests,
       deduplicationWindow: config.deduplicationWindow,
       errorHandler: this.errorHandler,
+      requestIdGenerator: config.requestIdGenerator,
+      enableRequestQueue: config.enableRequestQueue,
+      maxConcurrentRequests: config.maxConcurrentRequests,
+      enableOfflineQueue: config.enableOfflineQueue,
+      enableMetrics: config.enableMetrics,
+      metricsCallback: config.metricsCallback,
+      enableThrottling: config.enableThrottling,
+      throttleMaxRequests: config.throttleMaxRequests,
+      throttleWindowMs: config.throttleWindowMs,
+      hookManager: this.hookManager,
+      proxy: config.proxy,
+      onResponse: (response: Response) => {
+        this.apiVersionHandler.checkResponseHeaders(response.headers);
+      },
     });
 
     if (this.token) {
       this.httpClient.setHeader('Authorization', `Bearer ${this.token}`);
+    }
+
+    // Initialize failover manager if multiple endpoints provided
+    if (config.endpoints && config.endpoints.length > 0) {
+      const allEndpoints = [config.baseUrl, ...config.endpoints];
+      this.failoverManager = new FailoverManager({
+        endpoints: allEndpoints,
+        healthCheckInterval: config.healthCheckInterval,
+      });
     }
 
     this.bindMethods();
@@ -144,6 +250,14 @@ export class DorisioClient {
     this.httpClient.setTokenRefresher(async () => {
       await this.refreshSession();
     });
+
+    // Initialize telemetry if configured
+    if (config.telemetry && config.telemetry.enabled) {
+      this.telemetryClient = new TelemetryClient(config.telemetry);
+    }
+
+    // Initialize plugin system
+    this.pluginSystem = new PluginSystem();
   }
 
   /**
@@ -153,7 +267,7 @@ export class DorisioClient {
     this.getCreator = creatorMethods.getCreator.bind(this);
     this.listCreators = creatorMethods.listCreators.bind(this);
     this.getCreatorProfile = creatorMethods.getCreatorProfile.bind(this);
-    this.verifyCreator = verificationMethods.verifyCreator.bind(this);
+    this.verifyCreator = creatorMethods.verifyCreator.bind(this);
 
     this.connectWallet = walletMethods.connectWallet.bind(this);
     this.disconnectWallet = walletMethods.disconnectWallet.bind(this);
@@ -196,18 +310,27 @@ export class DorisioClient {
     this.isAuthenticated = authMethods.isAuthenticated.bind(this);
     this.extendSession = authMethods.extendSession.bind(this);
     this.getSessionExpiry = authMethods.getSessionExpiry.bind(this);
+
     this.getCreators = batchMethods.getCreators.bind(this);
     this.getAllTransactionHistory = batchMethods.getAllTransactionHistory.bind(this);
     this.getAllWalletBalances = batchMethods.getAllWalletBalances.bind(this);
+    this.getCreatorsBatch = batchMethods.getCreatorsBatch.bind(this);
+    this.getWalletBalancesBatch = batchMethods.getWalletBalancesBatch.bind(this);
+    this.createTipsBatch = batchMethods.createTipsBatch.bind(this);
+    this.processBatchWithRetry = batchMethods.processBatchWithRetry.bind(this) as any;
+    this.retryBatch = batchMethods.retryBatch.bind(this) as any;
   }
 
   /**
    * Set authentication token
+   *
+   * @param token - Bearer JWT or API token
    */
   setToken(token: string): void {
     this.token = token;
     this.config.token = token;
     this.httpClient.setHeader('Authorization', `Bearer ${token}`);
+    this.graphql.setToken(token);
   }
 
   /**
@@ -217,6 +340,7 @@ export class DorisioClient {
     this.token = undefined;
     this.config.token = undefined;
     this.httpClient.removeHeader('Authorization');
+    this.graphql.clearToken();
   }
 
   /**
@@ -228,36 +352,56 @@ export class DorisioClient {
     body?: unknown,
     options?: Partial<RequestOptions>
   ): Promise<ApiResponse<T>> {
-    const requestBody = body;
-    const requestHeaders = options?.headers;
-    const startedAt = Date.now();
+    this.apiVersionHandler.checkEndpointDeprecation(path);
+
+    const initialHeaders = options?.headers ? { ...options.headers } : {};
+    const migrated = this.apiVersionHandler.migrateRequest({
+      method,
+      path,
+      body,
+      headers: initialHeaders,
+    });
+
+    const requestBody = migrated.body;
+    const requestHeaders = migrated.headers;
+    const requestPath = migrated.path;
+    const requestMethod = (migrated.method || method) as 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+
+    const mergedOptions: Partial<RequestOptions> = {
+      ...options,
+      headers: requestHeaders,
+      onResponse: (response: Response) => {
+        this.apiVersionHandler.checkResponseHeaders(response.headers, requestPath);
+        options?.onResponse?.(response);
+      },
+    };
 
     // Execute middleware chain for request transformation
     const executeMiddleware = async (index: number): Promise<ApiResponse<T>> => {
       if (index >= this.middleware.length) {
         // All middleware executed, make the actual request
-        return this.httpClient.request<ApiResponse<T>>(path, {
-          method,
+        return this.httpClient.request<ApiResponse<T>>(requestPath, {
+          method: requestMethod,
           body: requestBody as Record<string, unknown>,
           headers: requestHeaders,
-          ...options,
+          ...mergedOptions,
         });
       }
 
       const middleware = this.middleware[index];
       if (!middleware) {
-        return this.httpClient.request<ApiResponse<T>>(path, {
-          method,
+        return this.httpClient.request<ApiResponse<T>>(requestPath, {
+          method: requestMethod,
           body: requestBody as Record<string, unknown>,
           headers: requestHeaders,
-          ...options,
+          ...mergedOptions,
         });
       }
 
       const result = await middleware(
         {
-          method,
-          path,
+          method: requestMethod,
+          path: requestPath,
           body: requestBody,
           headers: requestHeaders,
           requestId: options?.requestId,
@@ -268,50 +412,61 @@ export class DorisioClient {
       return result as ApiResponse<T>;
     };
 
-    try {
-      const response = await executeMiddleware(0);
-      this.recordOperation(method, path, startedAt, true);
-      return response;
-    } catch (error) {
-      this.recordOperation(method, path, startedAt, false, error);
-      throw error;
-    }
+    const res = await executeMiddleware(0);
+    return this.apiVersionHandler.migrateResponse(
+      res,
+      this.apiVersionHandler.getCurrentVersion(),
+      this.apiVersionHandler.getCurrentVersion(),
+      { path: requestPath, method: requestMethod }
+    );
   }
 
-  /**
-   * Feed one finished operation into the analytics tracker.
-   *
-   * `error` is duck-typed rather than `instanceof`-checked so errors coming from
-   * another realm (bundlers, workers, test doubles) are still classified.
-   */
-  private recordOperation(
+  private async executeWithFailover<T>(
     method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE',
     path: string,
-    startedAt: number,
-    success: boolean,
-    error?: unknown
-  ): void {
-    let errorCode: string | undefined;
-    let statusCode: number | undefined;
+    body?: unknown,
+    headers?: Record<string, string>,
+    options?: Partial<RequestOptions>
+  ): Promise<ApiResponse<T>> {
+    if (!this.failoverManager) {
+      return this.httpClient.request<ApiResponse<T>>(path, {
+        method,
+        body: body as Record<string, unknown>,
+        headers,
+        ...options,
+      });
+    }
 
-    if (error && typeof error === 'object') {
-      const candidate = error as { code?: unknown; statusCode?: unknown };
-      if (typeof candidate.code === 'string' && candidate.code.length > 0) {
-        errorCode = candidate.code;
-      }
-      if (typeof candidate.statusCode === 'number') {
-        statusCode = candidate.statusCode;
+    let lastError: Error | undefined;
+    const endpoints = this.failoverManager.getEndpoints().map((e) => e.url);
+
+    for (const endpointUrl of endpoints) {
+      try {
+        // Create a temporary httpClient pointed at this endpoint
+        const tempClient = new HttpClient(endpointUrl, {
+          timeout: this.config.timeout,
+          retryAttempts: getConfig().retryAttempts,
+          mode: this.mode,
+        });
+        if (this.token) {
+          tempClient.setHeader('Authorization', `Bearer ${this.token}`);
+        }
+        const result = await tempClient.request<ApiResponse<T>>(path, {
+          method,
+          body: body as Record<string, unknown>,
+          headers,
+          ...options,
+        });
+        this.failoverManager.recordSuccess(endpointUrl);
+        return result;
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+        this.failoverManager.recordFailure(endpointUrl);
+        if (endpointUrl === endpoints[endpoints.length - 1]) break;
       }
     }
 
-    this.analytics.record({
-      method: `${method} ${path}`,
-      latency: Math.max(0, Date.now() - startedAt),
-      success,
-      statusCode,
-      errorCode,
-      errorMessage: error instanceof Error ? error.message : undefined,
-    });
+    throw lastError ?? new Error('All endpoints failed');
   }
 
   /**
@@ -329,33 +484,60 @@ export class DorisioClient {
   }
 
   /**
-   * Get the analytics tracker (advanced usage: subscribe, reset, toggle).
+   * Start real-time sync over WebSocket.
+   *
+   * Uses `options` when given, otherwise `ClientConfig.websocket`. The client
+   * token is passed to the socket unless the options already carry one, and the
+   * returned {@link WebSocketClient} is reused by `subscribeRealtime()`.
    */
-  getAnalytics(): Analytics {
-    return this.analytics;
+  async enableRealtime(options?: WebSocketClientOptions): Promise<WebSocketClient> {
+    const resolved =
+      options ?? (this.config.websocket === false ? undefined : this.config.websocket);
+    if (!resolved || typeof resolved.url !== 'string' || resolved.url.length === 0) {
+      throw new Error(
+        'enableRealtime() requires a WebSocket url (pass one, or set ClientConfig.websocket)'
+      );
+    }
+
+    if (this.realtime) this.disableRealtime();
+
+    this.realtime = new WebSocketClient({ token: this.token, ...resolved });
+    await this.realtime.connect();
+    return this.realtime;
+  }
+
+  /** The real-time client, or `null` when real-time is not enabled. */
+  getRealtime(): WebSocketClient | null {
+    return this.realtime;
+  }
+
+  /** Current real-time state, or `disabled` when not enabled. */
+  getRealtimeState(): WebSocketState | 'disabled' {
+    return this.realtime ? this.realtime.getState() : 'disabled';
   }
 
   /**
-   * Current analytics snapshot: call counts, success/error rates, latency
-   * percentiles (p50/p95/p99) and error patterns.
+   * Subscribe to a real-time channel. Requires {@link enableRealtime} (or a
+   * `ClientConfig.websocket`) first. Returns an unsubscribe function.
    */
-  getAnalyticsSnapshot(): AnalyticsSnapshot {
-    return this.analytics.getSnapshot();
+  subscribeRealtime<T = unknown>(
+    channel: string,
+    listener: RealtimeListener<T>,
+    params?: Record<string, unknown>
+  ): () => void {
+    if (!this.realtime) {
+      throw new Error(
+        'Realtime is not enabled: call await enableRealtime() (or set ClientConfig.websocket) first'
+      );
+    }
+    return this.realtime.subscribe(channel, listener, params);
   }
 
-  /**
-   * Export collected metrics as pretty JSON (`json`) or CSV (`csv`).
-   */
-  exportAnalytics(format: 'json' | 'csv' = 'json'): string {
-    return this.analytics.exportMetrics(format);
-  }
-
-  /**
-   * Stream an event after every recorded operation. Returns an unsubscribe
-   * function; use it to forward metrics to your own backend.
-   */
-  onAnalyticsEvent(listener: AnalyticsListener): () => void {
-    return this.analytics.subscribe(listener);
+  /** Close the real-time connection and drop the client. */
+  disableRealtime(): void {
+    if (!this.realtime) return;
+    this.realtime.disconnect();
+    this.realtime = null;
   }
 
   /**
@@ -372,6 +554,7 @@ export class DorisioClient {
     this.mode = normalizeClientMode(mode);
     this.config.mode = this.mode;
     this.httpClient.setMode(mode as HttpClientMode);
+    this.graphql.setMode(this.mode);
   }
 
   /**
@@ -417,28 +600,176 @@ export class DorisioClient {
     this.middleware.push(middleware);
   }
 
+  /**
+   * Register a lifecycle hook for deep request/response customization
+   */
+  registerHook(hook: HookRegistration): void {
+    this.hookManager.register(hook);
+  }
+
+  /**
+   * Unregister a lifecycle hook by name
+   */
+  unregisterHook(name: string): void {
+    this.hookManager.unregister(name);
+  }
+
+  /**
+   * Get the hook manager instance
+   */
+  getHookManager(): HookManager {
+    return this.hookManager;
+  }
+
+  /**
+   * Set error reporter for automatic error reporting
+   */
+  setErrorReporter(reporter: ErrorReporter): void {
+    this.errorReporter = reporter;
+  }
+
+  /**
+   * Get error reporter instance
+   */
+  getErrorReporter(): ErrorReporter | undefined {
+    return this.errorReporter;
+  }
+
+  /**
+   * Get throttle manager instance if enabled
+   */
+  getThrottleManager(): ThrottleManager | undefined {
+    return this.httpClient.getThrottleManager();
+  }
+
+  /**
+   * Set proxy configuration
+   */
+  setProxy(proxy: ProxyConfig): void {
+    this.config.proxy = proxy;
+    this.httpClient.setProxy(proxy);
+  }
+
+  /**
+   * Get current proxy configuration
+   */
+  getProxy(): ProxyConfig | undefined {
+    return this.httpClient.getProxy();
+  }
+
+  /**
+   * Get currently active API version
+   */
+  on(event: OfflineEventType, listener: OfflineEventListener): void {
+    const queue = this.httpClient.getOfflineQueue();
+    if (queue) {
+      queue.on(event, listener);
+    }
+  }
+
+  /**
+   * Unsubscribe from offline queue lifecycle events
+   */
+  off(event: OfflineEventType, listener: OfflineEventListener): void {
+    const queue = this.httpClient.getOfflineQueue();
+    if (queue) {
+      queue.off(event, listener);
+    }
+  }
+
+  /**
+   * Get collected performance metrics summary
+   */
+  getMetrics(): MetricsSummary {
+    return this.httpClient.getMetrics();
+  }
+
+  /**
+   * Get metrics collector instance
+   */
+  getMetricsCollector(): MetricsCollector {
+    return this.httpClient.getMetricsCollector();
+  }
+
+  /**
+   * Check if client is currently in online state
+   */
+  isOnline(): boolean {
+    return this.httpClient.isOnline();
+  }
+
+  /**
+   * Set client online state (triggers queued mutation replay when returning to online)
+   */
+  setOnline(online: boolean): void {
+    this.httpClient.setOnline(online);
+  }
+
+  /**
+   * Get number of mutations waiting in offline queue
+   */
+  getOfflineQueueSize(): number {
+    return this.httpClient.getOfflineQueueSize();
+  }
+
   // ---------------------------------------------------------------------------
   // Creator methods
   // ---------------------------------------------------------------------------
-  declare getCreator: (creatorId: string) => Promise<Creator>;
-  declare listCreators: (options?: {
-    page?: number;
-    pageSize?: number;
-    verified?: boolean;
-  }) => Promise<{ creators: Creator[]; total: number; page: number; pageSize: number }>;
-  declare getCreatorProfile: (username: string) => Promise<CreatorProfile>;
-  declare verifyCreator: (creatorId: string, verified: boolean) => Promise<Creator>;
+  declare getCreator: (
+    creatorId: string,
+    options?: Partial<RequestOptions>
+  ) => Promise<Creator>;
+  declare listCreators: (
+    queryOptions?: {
+      page?: number;
+      pageSize?: number;
+      verified?: boolean;
+    },
+    options?: Partial<RequestOptions>
+  ) => Promise<{ creators: Creator[]; total: number; page: number; pageSize: number }>;
+  declare getCreatorProfile: (
+    username: string,
+    options?: Partial<RequestOptions>
+  ) => Promise<CreatorProfile>;
+  declare verifyCreator: (
+    creatorId: string,
+    verified: boolean,
+    options?: Partial<RequestOptions>
+  ) => Promise<Creator>;
 
   // ---------------------------------------------------------------------------
   // Wallet methods
   // ---------------------------------------------------------------------------
-  declare connectWallet: (data: CreateWalletRequest) => Promise<Wallet>;
-  declare disconnectWallet: (walletId: string) => Promise<void>;
-  declare getWallets: (userId: string) => Promise<Wallet[]>;
-  declare getWallet: (walletId: string) => Promise<Wallet>;
-  declare updateWallet: (walletId: string, data: UpdateWalletRequest) => Promise<Wallet>;
-  declare verifyWallet: (walletId: string, proof: string) => Promise<Wallet>;
-  declare getWalletBalance: (walletId: string) => Promise<BalanceInfo>;
+  declare connectWallet: (
+    data: CreateWalletRequest,
+    options?: Partial<RequestOptions>
+  ) => Promise<Wallet>;
+  declare disconnectWallet: (
+    walletId: string,
+    options?: Partial<RequestOptions>
+  ) => Promise<void>;
+  declare getWallets: (
+    userId: string,
+    options?: Partial<RequestOptions>
+  ) => Promise<Wallet[]>;
+  declare getWallet: (
+    walletId: string,
+    options?: Partial<RequestOptions>
+  ) => Promise<Wallet>;
+  declare updateWallet: (
+    walletId: string,
+    data: UpdateWalletRequest,
+    options?: Partial<RequestOptions>
+  ) => Promise<Wallet>;
+  declare verifyWallet: (
+    walletId: string,
+    proof?: string,
+    options?: Partial<RequestOptions>
+  ) => Promise<Wallet>;
+  declare getWalletBalance: (
+    walletId: string,
+    options?: Partial<RequestOptions>
+  ) => Promise<BalanceInfo>;
 
   // ---------------------------------------------------------------------------
   // Transaction methods
@@ -452,16 +783,16 @@ export class DorisioClient {
     options?: Partial<RequestOptions>
   ) => Promise<Transaction>;
   declare getTransactionHistory: (
-    options?: {
+    queryOptions?: {
       page?: number;
       pageSize?: number;
     },
-    requestOptions?: Partial<RequestOptions>
+    options?: Partial<RequestOptions>
   ) => Promise<TransactionHistory>;
   declare getCreatorTipsReceived: (
     creatorId: string,
-    options?: { page?: number; pageSize?: number },
-    requestOptions?: Partial<RequestOptions>
+    queryOptions?: { page?: number; pageSize?: number },
+    options?: Partial<RequestOptions>
   ) => Promise<TransactionHistory>;
   declare buildPaymentTransaction: (
     tipId: string,
@@ -486,37 +817,60 @@ export class DorisioClient {
   // ---------------------------------------------------------------------------
   // History methods
   // ---------------------------------------------------------------------------
-  declare getFullTransactionHistory: (options?: {
-    page?: number;
-    pageSize?: number;
-    startDate?: Date;
-    endDate?: Date;
-    status?: 'pending' | 'confirmed' | 'failed';
-  }) => Promise<TransactionHistory>;
-  declare getTransactionStats: (userId?: string) => Promise<TransactionStats>;
-  declare getCreatorEarnings: (creatorId: string) => Promise<{
+  declare getFullTransactionHistory: (
+    queryOptions?: {
+      page?: number;
+      pageSize?: number;
+      startDate?: Date;
+      endDate?: Date;
+      status?: 'pending' | 'confirmed' | 'failed';
+    },
+    options?: Partial<RequestOptions>
+  ) => Promise<TransactionHistory>;
+  declare getTransactionStats: (
+    userId?: string,
+    options?: Partial<RequestOptions>
+  ) => Promise<TransactionStats>;
+  declare getCreatorEarnings: (
+    creatorId: string,
+    options?: Partial<RequestOptions>
+  ) => Promise<{
     totalEarnings: number;
     pendingBalance: number;
     confirmedBalance: number;
     transactionCount: number;
   }>;
-  declare exportTransactionHistory: (options?: {
-    format?: 'csv' | 'json';
-    startDate?: Date;
-    endDate?: Date;
-  }) => Promise<string>;
+  declare exportTransactionHistory: (
+    exportOptions?: {
+      format?: 'csv' | 'json';
+      startDate?: Date;
+      endDate?: Date;
+    },
+    options?: Partial<RequestOptions>
+  ) => Promise<string>;
 
   // ---------------------------------------------------------------------------
   // Balance methods
   // ---------------------------------------------------------------------------
-  declare getBalance: (userId: string) => Promise<AccountBalance>;
-  declare getCreatorPendingPayout: (creatorId: string) => Promise<{
+  declare getBalance: (
+    userId: string,
+    options?: Partial<RequestOptions>
+  ) => Promise<AccountBalance>;
+  declare getCreatorPendingPayout: (
+    creatorId: string,
+    options?: Partial<RequestOptions>
+  ) => Promise<{
     pending: number;
     nextPayoutDate?: string;
     minimumThreshold: number;
   }>;
-  declare canPayout: (creatorId: string) => Promise<boolean>;
-  declare getAccountSummary: () => Promise<{
+  declare canPayout: (
+    creatorId: string,
+    options?: Partial<RequestOptions>
+  ) => Promise<boolean>;
+  declare getAccountSummary: (
+    options?: Partial<RequestOptions>
+  ) => Promise<{
     userId: string;
     email: string;
     role: string;
@@ -531,36 +885,222 @@ export class DorisioClient {
   // ---------------------------------------------------------------------------
   declare requestCreatorVerification: (
     creatorId: string,
-    data: { documentType: string; documentUrl?: string; description?: string }
+    data: { documentType: string; documentUrl?: string; description?: string },
+    options?: Partial<RequestOptions>
   ) => Promise<VerificationStatus>;
   declare getCreatorVerificationStatus: (
-    creatorId: string
+    creatorId: string,
+    options?: Partial<RequestOptions>
   ) => Promise<VerificationStatus & { status: string }>;
-  declare getWalletVerificationStatus: (walletId: string) => Promise<VerificationStatus>;
+  declare getWalletVerificationStatus: (
+    walletId: string,
+    options?: Partial<RequestOptions>
+  ) => Promise<VerificationStatus>;
   declare requestWalletVerificationChallenge: (
-    walletId: string
+    walletId: string,
+    options?: Partial<RequestOptions>
   ) => Promise<{ challenge: string; expiresIn: number }>;
-  declare isTransactionVerified: (transactionId: string) => Promise<boolean>;
+  declare isTransactionVerified: (
+    transactionId: string,
+    options?: Partial<RequestOptions>
+  ) => Promise<boolean>;
 
   // ---------------------------------------------------------------------------
   // Auth methods
   // ---------------------------------------------------------------------------
-  declare refreshSession: () => Promise<SessionInfo>;
-  declare validateSession: () => Promise<User>;
-  declare getCurrentUser: () => Promise<User>;
-  declare logout: () => Promise<void>;
-  declare isAuthenticated: () => Promise<boolean>;
-  declare extendSession: () => Promise<SessionInfo>;
-  declare getSessionExpiry: () => Promise<{
+  declare refreshSession: (
+    options?: Partial<RequestOptions>
+  ) => Promise<SessionInfo>;
+  declare validateSession: (
+    options?: Partial<RequestOptions>
+  ) => Promise<User>;
+  declare getCurrentUser: (
+    options?: Partial<RequestOptions>
+  ) => Promise<User>;
+  declare logout: (
+    options?: Partial<RequestOptions>
+  ) => Promise<void>;
+  declare isAuthenticated: (
+    options?: Partial<RequestOptions>
+  ) => Promise<boolean>;
+  declare extendSession: (
+    options?: Partial<RequestOptions>
+  ) => Promise<SessionInfo>;
+  declare getSessionExpiry: (
+    options?: Partial<RequestOptions>
+  ) => Promise<{
     expiresAt: string;
     expiresIn: number;
     isExpired: boolean;
   }>;
 
-  declare getCreators: (creatorIds: string[], concurrency?: number) => Promise<Creator[]>;
-  declare getAllTransactionHistory: (pageSize?: number) => Promise<TransactionHistory>;
+  // ---------------------------------------------------------------------------
+  // Batch operations
+  // ---------------------------------------------------------------------------
+  declare getCreators: (
+    creatorIds: string[],
+    concurrency?: number,
+    options?: Partial<RequestOptions>
+  ) => Promise<Creator[]>;
+  declare getAllTransactionHistory: (
+    pageSize?: number,
+    options?: Partial<RequestOptions>
+  ) => Promise<TransactionHistory>;
   declare getAllWalletBalances: (
     walletIds: string[],
-    concurrency?: number
+    concurrency?: number,
+    options?: Partial<RequestOptions>
   ) => Promise<BalanceInfo[]>;
+  declare getCreatorsBatch: (
+    creatorIds: string[],
+    options?: BatchProcessorOptions
+  ) => Promise<BatchResult<string, Creator>>;
+  declare getWalletBalancesBatch: (
+    walletIds: string[],
+    options?: BatchProcessorOptions
+  ) => Promise<BatchResult<string, BalanceInfo>>;
+  declare createTipsBatch: (
+    tips: CreateTipRequest[],
+    options?: BatchProcessorOptions
+  ) => Promise<BatchResult<CreateTipRequest, Transaction>>;
+  declare processBatchWithRetry: <T, R>(
+    items: T[],
+    fn: (item: T, index: number) => Promise<R>,
+    options?: BatchProcessorOptions
+  ) => Promise<BatchResult<T, R>>;
+  declare retryBatch: <T, R>(
+    batchResult: BatchResult<T, R>,
+    fn: (item: T, index: number) => Promise<R>,
+    options?: BatchProcessorOptions
+  ) => Promise<BatchResult<T, R>>;
+
+  // ---------------------------------------------------------------------------
+  // Telemetry methods
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Get telemetry client instance
+   */
+  getTelemetryClient(): TelemetryClient | undefined {
+    return this.telemetryClient;
+  }
+
+  /**
+   * Enable telemetry collection
+   */
+  enableTelemetry(): void {
+    if (this.telemetryClient) {
+      this.telemetryClient.enable();
+    }
+  }
+
+  /**
+   * Disable telemetry collection
+   */
+  disableTelemetry(): void {
+    if (this.telemetryClient) {
+      this.telemetryClient.disable();
+    }
+  }
+
+  /**
+   * Flush pending telemetry events
+   */
+  async flushTelemetry(): Promise<void> {
+    if (this.telemetryClient) {
+      await this.telemetryClient.flush();
+    }
+  }
+
+  /**
+   * Shutdown telemetry client
+   */
+  async shutdownTelemetry(): Promise<void> {
+    if (this.telemetryClient) {
+      await this.telemetryClient.shutdown();
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Plugin system methods
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Install a plugin
+   */
+  async installPlugin(plugin: Plugin): Promise<void> {
+    await this.pluginSystem.install(plugin);
+  }
+
+  /**
+   * Uninstall a plugin
+   */
+  async uninstallPlugin(pluginName: string): Promise<void> {
+    await this.pluginSystem.uninstall(pluginName);
+  }
+
+  /**
+   * Get installed plugin by name
+   */
+  getPlugin(name: string): Plugin | undefined {
+    return this.pluginSystem.getPlugin(name);
+  }
+
+  /**
+   * Get all installed plugins
+   */
+  getPlugins(): Plugin[] {
+    return this.pluginSystem.getPlugins();
+  }
+
+  /**
+   * Check if plugin is installed
+   */
+  isPluginInstalled(name: string): boolean {
+    return this.pluginSystem.isPluginInstalled(name);
+  }
+
+  /**
+   * Get plugin system instance for advanced operations
+   */
+  getPluginSystem(): PluginSystem {
+    return this.pluginSystem;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Distributed Tracing methods
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Initialize OpenTelemetry tracer provider for distributed tracing
+   *
+   * @param tracerProvider - OpenTelemetry TracerProvider instance
+   */
+  initializeDistributedTracing(tracerProvider: any): void {
+    initializeTracing(tracerProvider);
+    this.log('Distributed tracing initialized', { tracerProvider: 'OpenTelemetry' });
+  }
+
+  /**
+   * Get tracing provider instance
+   *
+   * @returns Distributed tracing provider
+   */
+  getTracingProvider() {
+    return getTracingProvider();
+  }
+
+  /**
+   * Make a traced HTTP request
+   *
+   * @param path - Request path
+   * @param options - Request options
+   * @returns Promise with traced response
+   */
+  async requestWithTracing<T>(path: string, options: Partial<RequestOptions> = {}): Promise<T> {
+    return this.httpClient.requestWithTracing<T>(path, {
+      method: 'GET',
+      ...options,
+    } as RequestOptions);
+  }
 }
