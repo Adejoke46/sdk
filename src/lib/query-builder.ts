@@ -80,7 +80,6 @@ export function buildQueryString(options: QueryOptions = {}): string {
 
 /**
  * Parse pagination metadata from response.
- * Pass the request `offset` for offset-based backends that don't echo `page`.
  */
 export function parsePaginationMeta(
   response: any,
@@ -362,6 +361,10 @@ export class Paginator<T> {
 /**
  * Wrap any list function in a {@link Paginator}.
  */
-export function createPaginator<T>(fetcher: PageFetcher<T>, options?: QueryOptions): Paginator<T> {
-  return new Paginator<T>(fetcher, options);
+export function createPaginator<T>(
+  client: ListClient,
+  endpoint: 'tips' | 'creators' | 'creator-tips',
+  options?: QueryOptions
+): Paginator<T> {
+  return new Paginator(client, endpoint, options);
 }
