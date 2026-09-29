@@ -130,6 +130,22 @@ export {
 } from './integrations/sentry';
 
 
+// Re-export real-time sync (Issue #58)
+export {
+  WebSocketClient,
+  ALL_CHANNELS,
+  type WebSocketClientOptions,
+  type WebSocketState,
+  type WebSocketLike,
+  type WebSocketFactory,
+  type RealtimeEvent,
+  type RealtimeListener,
+  type RealtimeFrame,
+  type RealtimeSource,
+  type RealtimeStateListener,
+  type PollingFallbackOptions,
+} from './websocket/websocket-client';
+
 // Re-export types
 export type { ApiResponse, PaginationMeta, PaginatedResponse } from './types/api';
 export {
