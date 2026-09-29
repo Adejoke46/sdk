@@ -23,7 +23,7 @@ describe('Wallet Methods', () => {
     client.getWallets = WalletMethods.getWallets.bind(client);
     client.getWallet = WalletMethods.getWallet.bind(client);
     client.updateWallet = WalletMethods.updateWallet.bind(client);
-    client.verifyWallet = WalletMethods.verifyWallet.bind(client as any);
+    client.verifyWallet = WalletMethods.verifyWallet.bind(client as any) as any;
     (client as any).getBalance = WalletMethods.getBalance.bind(client as any);
 
     mockRequest.mockClear();

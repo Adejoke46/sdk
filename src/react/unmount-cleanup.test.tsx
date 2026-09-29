@@ -16,8 +16,7 @@ import { useWallet } from './useWallet';
 import { useCreateTip } from './useCreateTip';
 import { useTransactionHistory } from './useTransactionHistory';
 import { useCreatorBalance } from './useCreatorBalance';
-import type { DorisioClient } from '../client';
-import type { ClientConfig } from '../types/config';
+import type { DorisioClient, ClientConfig } from '../client';
 
 let consoleError: MockInstance<any[], any>;
 let consoleWarn: MockInstance<any[], any>;

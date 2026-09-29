@@ -8,6 +8,8 @@
 export {
   DorisioProvider,
   useDorisio,
+  isDorisioContext,
+  requireDorisioContext,
   type DorisioContextValue,
   type AuthState,
   type ErrorState,
