@@ -150,6 +150,36 @@ function createWrapper(client: ReturnType<typeof makeMockClient>) {
 }
 
 describe('Hook Unmount Cleanup (Issue #27)', () => {
+  describe('stable action callbacks', () => {
+    it('keeps wallet actions stable when wallet state changes', async () => {
+      const client = makeMockClient();
+      client.request.mockResolvedValue({ success: true, data: { wallets: [] } });
+      const { result } = renderHook(() => useWallet(), { wrapper: createWrapper(client) });
+      const listWallets = result.current.listWallets;
+
+      await act(async () => {
+        await result.current.listWallets();
+      });
+
+      expect(result.current.listWallets).toBe(listWallets);
+    });
+
+    it('keeps tip actions stable when tip state changes', async () => {
+      const client = makeMockClient();
+      const tip = { id: 'tip-1', status: 'pending' };
+      client.createTip.mockResolvedValue(tip);
+      const { result } = renderHook(() => useCreateTip(), { wrapper: createWrapper(client) });
+      const createTip = result.current.createTip;
+
+      await act(async () => {
+        await result.current.createTip({ creatorId: 'creator-1', amount: 10 });
+      });
+
+      expect(result.current.createTip).toBe(createTip);
+      expect(result.current.data).toBe(tip);
+    });
+  });
+
   describe('useWallet', () => {
     it('cancels in-flight generateNonce and does not update state on unmount', async () => {
       const client = makeMockClient();
