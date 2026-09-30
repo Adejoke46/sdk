@@ -40,6 +40,7 @@ import * as verificationMethods from './client/verification';
 import * as authMethods from './client/auth';
 import { CreateWalletRequest, UpdateWalletRequest } from './types/models';
 import * as batchMethods from './client/batch-operations';
+import { Batcher } from './utils/batch';
 import { GraphQLClient } from './graphql/graphql-client';
 import {
   BatchProcessorOptions,
@@ -974,9 +975,15 @@ export class DorisioClient {
     options?: BatchProcessorOptions
   ) => Promise<BatchResult<T, R>>;
 
+  batch<T = unknown>(): Batcher<T> {
+    return new Batcher<T>();
+  }
+
   // ---------------------------------------------------------------------------
+
   // Telemetry methods
   // ---------------------------------------------------------------------------
+
 
   /**
    * Get telemetry client instance
