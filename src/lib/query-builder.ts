@@ -362,9 +362,8 @@ export class Paginator<T> {
  * Wrap any list function in a {@link Paginator}.
  */
 export function createPaginator<T>(
-  client: ListClient,
-  endpoint: 'tips' | 'creators' | 'creator-tips',
+  fetcher: PageFetcher<T>,
   options?: QueryOptions
 ): Paginator<T> {
-  return new Paginator(client, endpoint, options);
+  return new Paginator<T>(fetcher, options);
 }

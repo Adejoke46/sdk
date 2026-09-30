@@ -298,12 +298,6 @@ export class HttpClient {
     this.logger(message, data);
   }
 
-  private log(message: string, data?: unknown): void {
-    if (this.debug) {
-      this.logger(message, data);
-    }
-  }
-
   /**
    * Get interceptor manager
    */
@@ -498,27 +492,6 @@ export class HttpClient {
       } finally {
         this.inFlightRequests.delete(requestId);
       }
-    };
-
-    const executeWithQueue = (): Promise<T> => {
-      if (this.requestQueue) {
-        return this.requestQueue.enqueue(executeInternal);
-      }
-      return executeInternal();
-    };
-
-    const executeWithOffline = (): Promise<T> => {
-      if (this.offlineQueue) {
-        return this.offlineQueue.handleRequest(options.method, path, executeWithQueue);
-      }
-      return executeWithQueue();
-    };
-
-    try {
-      const result = await executeWithOffline();
-      success = true;
-      statusCode = 200;
-      return result;
     };
 
     const executeWithQueue = (): Promise<T> => {
@@ -1005,9 +978,5 @@ export class HttpClient {
    */
   getTracingProvider() {
     return getTracingProvider();
-  }
-
-  private log(message: string, data: unknown): void {
-    if (this.debug) this.logger(message, data);
   }
 }

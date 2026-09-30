@@ -236,7 +236,7 @@ export class PluginSystem {
       for (const [hookName, handler] of Object.entries(plugin.hooks)) {
         const hook = hookName as PluginHook;
         const list = this.hooks.get(hook);
-        if (list !== undefined && handler) {
+        if (list !== undefined && handler !== undefined) {
           list.push({ handler, pluginName: plugin.name });
           // Re-sort by priority ascending (lower number = runs first)
           list.sort((a, b) => {
@@ -276,7 +276,8 @@ export class PluginSystem {
     // Remove every hook handler that belongs to this plugin
     for (const list of this.hooks.values()) {
       for (let i = list.length - 1; i >= 0; i--) {
-        if (list[i].pluginName === pluginName) {
+        const item = list[i];
+        if (item && item.pluginName === pluginName) {
           list.splice(i, 1);
         }
       }
@@ -363,7 +364,7 @@ export class PluginSystem {
       if (plugin.hooks) {
         for (const [hookName, handler] of Object.entries(plugin.hooks)) {
           const hook = hookName as PluginHook;
-          if (!composedHooks[hook] && handler) {
+          if (!composedHooks[hook] && handler !== undefined) {
             composedHooks[hook] = handler;
           }
         }

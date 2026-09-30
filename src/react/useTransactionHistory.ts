@@ -214,7 +214,7 @@ export function useTransactionHistory(
           creatorIdRef.current = resolvedCreator;
 
           return transactions;
-        })
+        }
       ),
     [client, setError, setIsLoading, safeSetState]
   );
