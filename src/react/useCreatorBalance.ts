@@ -109,10 +109,14 @@ export function useCreatorBalance(
   const creatorIdRef = useRef(creatorId);
   creatorIdRef.current = creatorId;
   const walletIdRef = useRef<string | undefined>(undefined);
+  const requestIdRef = useRef(0);
 
   const fetchBalance = useCallback(
-    (id: string, walletId?: string): Promise<CreatorBalance> =>
-      runSafely(
+    (id: string, walletId?: string): Promise<CreatorBalance> => {
+      const requestId = ++requestIdRef.current;
+      const isCurrentRequest = () => requestId === requestIdRef.current;
+
+      return runSafely(
         { setError, setIsLoading },
         {
           code: 'FETCH_BALANCE_ERROR',
@@ -124,8 +128,12 @@ export function useCreatorBalance(
             }
             creatorIdRef.current = id;
           },
-          onError: (error) => safeSetState((s) => ({ ...s, error, loading: false })),
-          isMounted: () => isMountedRef.current,
+          onError: (error) => {
+            if (isCurrentRequest()) {
+              safeSetState((s) => ({ ...s, error, loading: false }));
+            }
+          },
+          isMounted: () => isMountedRef.current && isCurrentRequest(),
         },
         () =>
           withAbort(async (signal) => {
@@ -176,11 +184,14 @@ export function useCreatorBalance(
               }
             }
 
-            safeSetState((s) => ({ ...s, balance, lastUpdated: Date.now(), loading: false }));
+            if (isCurrentRequest()) {
+              safeSetState((s) => ({ ...s, balance, lastUpdated: Date.now(), loading: false }));
+            }
 
             return balance;
           })
-      ),
+      );
+    },
     [client, setError, setIsLoading, safeSetState]
   );
 
@@ -192,6 +203,7 @@ export function useCreatorBalance(
   }, [fetchBalance]);
 
   const reset = useCallback(() => {
+    requestIdRef.current += 1;
     safeSetState({
       loading: false,
     });
@@ -202,14 +214,13 @@ export function useCreatorBalance(
     walletIdRef.current = undefined;
   }, [safeSetState]);
 
-  // Auto-fetch on mount
+  // Auto-fetch when the requested creator or fetch configuration changes.
   useEffect(() => {
     if (autoFetch && initialCreatorId) {
       // Error is already reflected in hook state; just make sure it can't go unhandled.
       logRejection(fetchBalance(initialCreatorId), 'useCreatorBalance auto-fetch');
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only autoFetch
-  }, []);
+  }, [autoFetch, initialCreatorId, fetchBalance]);
 
   return {
     ...state,
