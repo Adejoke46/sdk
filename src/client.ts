@@ -62,6 +62,8 @@ import {
 import type { ErrorReporter } from './lib/error-reporter';
 import { HookManager, type HookRegistration } from './lib/hooks';
 import { ThrottleManager } from './http/throttle-manager';
+import { localizeError } from './i18n';
+import type { I18nConfig } from './types/i18n';
 
 export type ClientMode = 'sandbox' | 'live' | 'production';
 
@@ -111,6 +113,8 @@ export interface ClientConfig {
   proxy?: ProxyConfig;
   /** Telemetry configuration for usage analytics */
   telemetry?: TelemetryConfig;
+  /** Language and custom translations for SDK error messages */
+  i18n?: I18nConfig;
 }
 
 function normalizeClientMode(mode?: ClientMode): 'live' | 'sandbox' {
@@ -177,6 +181,7 @@ export class DorisioClient {
       throttleMaxRequests: config.throttleMaxRequests,
       throttleWindowMs: config.throttleWindowMs,
       proxy: config.proxy,
+      i18n: config.i18n,
     };
 
     this.token = config.token;
@@ -319,6 +324,25 @@ export class DorisioClient {
     this.createTipsBatch = batchMethods.createTipsBatch.bind(this);
     this.processBatchWithRetry = batchMethods.processBatchWithRetry.bind(this) as any;
     this.retryBatch = batchMethods.retryBatch.bind(this) as any;
+
+    this.bindLocalizedMethods();
+  }
+
+  private bindLocalizedMethods(): void {
+    const clientFields = this as unknown as Record<string, unknown>;
+
+    for (const name of Object.keys(clientFields)) {
+      const method = clientFields[name];
+      if (typeof method !== 'function') continue;
+
+      const boundMethod = method as (...args: unknown[]) => unknown;
+      clientFields[name] = (...args: unknown[]) =>
+        Promise.resolve()
+          .then(() => boundMethod(...args))
+          .catch((error: unknown) => {
+            throw localizeError(error, this.config.i18n);
+          });
+    }
   }
 
   /**
@@ -412,7 +436,12 @@ export class DorisioClient {
       return result as ApiResponse<T>;
     };
 
-    const res = await executeMiddleware(0);
+    let res: ApiResponse<T>;
+    try {
+      res = await executeMiddleware(0);
+    } catch (error) {
+      throw localizeError(error, this.config.i18n);
+    }
     return this.apiVersionHandler.migrateResponse(
       res,
       this.apiVersionHandler.getCurrentVersion(),

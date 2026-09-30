@@ -9,6 +9,8 @@ export const SDK_VERSION = '0.1.0';
 
 // Re-export client and utilities
 export { DorisioClient, type ClientConfig } from './client';
+export { ERROR_TRANSLATIONS, localizeError } from './i18n';
+export type { ErrorI18nMetadata, ErrorTranslationKey, I18nConfig, I18nLanguage } from './types/i18n';
 
 // Re-export GraphQL client and queries
 export {
