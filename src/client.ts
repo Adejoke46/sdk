@@ -368,6 +368,25 @@ export class DorisioClient {
     this.createTipsBatch = batchMethods.createTipsBatch.bind(this);
     this.processBatchWithRetry = batchMethods.processBatchWithRetry.bind(this) as any;
     this.retryBatch = batchMethods.retryBatch.bind(this) as any;
+
+    this.bindLocalizedMethods();
+  }
+
+  private bindLocalizedMethods(): void {
+    const clientFields = this as unknown as Record<string, unknown>;
+
+    for (const name of Object.keys(clientFields)) {
+      const method = clientFields[name];
+      if (typeof method !== 'function') continue;
+
+      const boundMethod = method as (...args: unknown[]) => unknown;
+      clientFields[name] = (...args: unknown[]) =>
+        Promise.resolve()
+          .then(() => boundMethod(...args))
+          .catch((error: unknown) => {
+            throw localizeError(error, this.config.i18n);
+          });
+    }
   }
 
   /**

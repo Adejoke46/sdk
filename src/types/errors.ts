@@ -1,3 +1,5 @@
+import type { ErrorI18nMetadata } from './i18n';
+
 /**
  * Base error class for all SDK errors
  */
@@ -5,6 +7,7 @@ export class DorisioError extends Error {
   public readonly statusCode?: number;
   public readonly code?: string;
   public requestId?: string;
+  public i18n?: ErrorI18nMetadata;
 
   constructor(message: string, statusCode?: number, code?: string, requestId?: string) {
     super(message);
