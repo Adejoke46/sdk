@@ -15,7 +15,13 @@ import { RequestQueue } from './request-queue';
 import { OfflineQueue } from './offline-queue';
 import { ConnectionPool } from './connection-pool';
 import { JsonSerializer } from './serializer';
-import { MetricsCollector, type MetricsSummary, type MetricsCallback } from '../lib/metrics';
+import {
+  MetricsCollector,
+  type MetricsSummary,
+  type MetricsCallback,
+  type PerformanceMetrics,
+  type MonitoringConfig,
+} from '../lib/metrics';
 import { ThrottleManager } from './throttle-manager';
 import { HookManager, type HookContext, type ResponseContext } from '../lib/hooks';
 import {
@@ -116,6 +122,12 @@ export interface HttpClientOptions {
    * Optional callback invoked whenever a request metric is recorded.
    */
   metricsCallback?: MetricsCallback;
+  /**
+   * Opt-in performance monitoring. Latency, cache hit-rate, and memory usage
+   * are collected only when `monitoring.enabled` (or the legacy
+   * `enableMetrics`) is true.
+   */
+  monitoring?: MonitoringConfig;
   /** Enable request throttling */
   enableThrottling?: boolean;
   /** Max requests per throttling window */
@@ -292,9 +304,11 @@ export class HttpClient {
       this.offlineQueue = new OfflineQueue();
     }
 
+    const monitoring = options?.monitoring;
     this.metricsCollector = new MetricsCollector({
-      enabled: options?.enableMetrics ?? false,
-      callback: options?.metricsCallback,
+      enabled: monitoring?.enabled ?? options?.enableMetrics ?? false,
+      collectMetrics: monitoring?.collectMetrics ?? true,
+      callback: monitoring?.onMetrics ?? options?.metricsCallback,
     });
 
     if (this.deduplicationWindow < 0) {
@@ -868,6 +882,14 @@ export class HttpClient {
    */
   getMetrics(): MetricsSummary {
     return this.metricsCollector.getMetrics();
+  }
+
+  /**
+   * Get a performance snapshot including average latency, cache hit-rate,
+   * request/error counts, per-method stats, and process memory usage.
+   */
+  getPerformanceMetrics(): PerformanceMetrics {
+    return this.metricsCollector.getPerformanceMetrics();
   }
 
   /**

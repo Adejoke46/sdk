@@ -458,6 +458,45 @@ const client = new DorisioClient({
 });
 ```
 
+### Performance Monitoring
+
+Opt in to per-request latency tracking, cache hit-rate, and memory usage. Monitoring is
+disabled by default, so it adds no overhead unless enabled.
+
+```typescript
+const client = new DorisioClient({
+  baseUrl: 'https://api.dorisio.com',
+  monitoring: {
+    enabled: true,
+    collectMetrics: true,
+    onMetrics: (m) => {
+      console.log(`avg ${m.avgLatency}ms, cache hit-rate ${m.cacheHitRate}`);
+    },
+  },
+});
+
+await client.getCreator('creator-123');
+
+// Read an aggregated snapshot at any time.
+const stats = client.getPerformanceMetrics();
+console.log(stats.avgLatency);   // average latency across requests (ms)
+console.log(stats.cacheHitRate); // hits / (hits + misses), 0 - 1
+console.log(stats.requests, stats.errors, stats.errorRate);
+console.log(stats.methodStats);  // per-method request count + average latency
+console.log(stats.memoryUsage?.heapUsed); // process heap, null outside Node
+```
+
+`getPerformanceMetrics()` returns:
+
+- `requests`, `errors`, `errorRate` — request/error counters
+- `avgLatency` — average latency per request (ms)
+- `cacheHits`, `cacheMisses`, `cacheHitRate` — response cache effectiveness
+- `methodStats` — `{ count, avgLatency }` keyed by SDK / HTTP method
+- `memoryUsage` — `{ heapUsed, heapTotal, rss, external }`, or `null` when
+  `process.memoryUsage()` is unavailable (browser / edge runtimes)
+
+The legacy `enableMetrics` / `metricsCallback` options continue to work.
+
 ### Environment Variables
 
 ```bash

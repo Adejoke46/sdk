@@ -54,7 +54,12 @@ import { TelemetryClient, type TelemetryConfig } from './telemetry';
 import { PluginSystem, type Plugin } from './lib/plugin-system';
 import { Analytics } from './lib/analytics';
 import { initializeTracing, getTracingProvider } from './lib/telemetry';
-import type { MetricsCallback, MetricsSummary } from './lib/metrics';
+import type {
+  MetricsCallback,
+  MetricsSummary,
+  PerformanceMetrics,
+  MonitoringConfig,
+} from './lib/metrics';
 import type { OfflineEventType, OfflineEventListener } from './http/offline-queue';
 import {
   ApiVersionHandler,
@@ -113,6 +118,11 @@ export interface ClientConfig {
   enableMetrics?: boolean;
   /** Optional callback invoked whenever a request metric is recorded */
   metricsCallback?: MetricsCallback;
+  /**
+   * Opt-in performance monitoring (issue #133). Tracks per-request latency,
+   * cache hit-rate, and memory usage. Disabled by default.
+   */
+  monitoring?: MonitoringConfig;
   /** Error reporter instance for automatic error reporting */
   errorReporter?: ErrorReporter;
   /** Enable request throttling */
@@ -193,6 +203,7 @@ export class DorisioClient {
       enableOfflineQueue: config.enableOfflineQueue,
       enableMetrics: config.enableMetrics,
       metricsCallback: config.metricsCallback,
+      monitoring: config.monitoring,
       errorReporter: config.errorReporter,
       enableThrottling: config.enableThrottling,
       throttleMaxRequests: config.throttleMaxRequests,
@@ -243,6 +254,7 @@ export class DorisioClient {
       enableOfflineQueue: config.enableOfflineQueue,
       enableMetrics: config.enableMetrics,
       metricsCallback: config.metricsCallback,
+      monitoring: config.monitoring,
       enableThrottling: config.enableThrottling,
       throttleMaxRequests: config.throttleMaxRequests,
       throttleWindowMs: config.throttleWindowMs,
@@ -827,6 +839,15 @@ export class DorisioClient {
    */
   getMetrics(): MetricsSummary {
     return this.httpClient.getMetrics();
+  }
+
+  /**
+   * Get a performance snapshot (issue #133): average latency, cache hit-rate,
+   * request/error counts, per-method stats, and memory usage. `memoryUsage` is
+   * `null` in runtimes without `process.memoryUsage()` (e.g. browsers).
+   */
+  getPerformanceMetrics(): PerformanceMetrics {
+    return this.httpClient.getPerformanceMetrics();
   }
 
   /**
