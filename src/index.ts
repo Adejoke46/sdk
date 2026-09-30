@@ -9,6 +9,7 @@ export const SDK_VERSION = '0.1.0';
 
 // Re-export client and utilities
 export { DorisioClient, type ClientConfig } from './client';
+export type { CompressionAlgorithm, RequestCompressionConfig } from './http/compress';
 
 // Re-export GraphQL client and queries
 export {

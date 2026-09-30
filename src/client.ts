@@ -120,6 +120,8 @@ export interface ClientConfig {
   throttleWindowMs?: number;
   /** Proxy configuration for corporate environments */
   proxy?: ProxyConfig;
+  /** Compress serialized request bodies above the configured threshold (default 1 KiB). */
+  compress?: RequestCompressionConfig;
   /** Telemetry configuration for usage analytics */
   telemetry?: TelemetryConfig;
   /** Offline-first storage and sync configuration */
@@ -191,6 +193,7 @@ export class DorisioClient {
       throttleMaxRequests: config.throttleMaxRequests,
       throttleWindowMs: config.throttleWindowMs,
       proxy: config.proxy,
+      compress: config.compress,
     };
 
     this.token = config.token;
