@@ -35,7 +35,10 @@ export class ConnectionPool {
   }
 
   async acquire(signal?: AbortSignal): Promise<() => void> {
-    if (signal?.aborted) throw new DOMException('The operation was aborted', 'AbortError');
+    // No pre-emptive abort check: an already-aborted signal still has to reach
+    // the transport, so the caller observes the transport's own AbortError and
+    // the request is attempted exactly once. Aborts while waiting are handled
+    // by the waiter below.
     if (this.active < this.maxConnections) {
       this.active++;
       this.totalAcquired++;

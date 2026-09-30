@@ -204,7 +204,9 @@ export class DistributedTracingProvider {
   startSpan(operationName: string, attributes?: SpanAttributes): Span {
     const traceId = this.rootTraceId || this.generateTraceId();
     const spanId = this.generateSpanId();
-    const parentSpanId = this.spanStack.length > 0 ? this.spanStack[this.spanStack.length - 1].getContext().spanId : undefined;
+    const parentSpan =
+      this.spanStack.length > 0 ? this.spanStack[this.spanStack.length - 1] : undefined;
+    const parentSpanId = parentSpan?.getContext().spanId;
 
     let span: Span;
 

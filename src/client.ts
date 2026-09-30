@@ -8,9 +8,10 @@
  */
 
 import { HttpClient, RequestOptions, type HttpClientMode, type ProxyConfig } from './http/http-client';
-import { FailoverManager, type EndpointConfig } from './http/failover-manager';
+import { FailoverManager } from './http/failover-manager';
 import { getConfig } from './config';
 import { ApiResponse } from './types/api';
+import { Analytics, type AnalyticsOptions, type AnalyticsSnapshot, type AnalyticsExportFormat, type AnalyticsListener } from './lib/analytics';
 import {
   Creator,
   CreatorProfile,
@@ -62,6 +63,16 @@ import {
 import type { ErrorReporter } from './lib/error-reporter';
 import { HookManager, type HookRegistration } from './lib/hooks';
 import { ThrottleManager } from './http/throttle-manager';
+import { RequestSigner, type RequestSignerOptions } from './http/request-signer';
+import type { StreamedResponse } from './http/http-client';
+import type { StreamRequestOptions } from './types/stream';
+import type { MetricsCollector } from './lib/metrics';
+import {
+  WebSocketClient,
+  type WebSocketClientOptions,
+  type WebSocketState,
+  type RealtimeListener,
+} from './websocket/websocket-client';
 
 export type ClientMode = 'sandbox' | 'live' | 'production';
 
@@ -111,6 +122,32 @@ export interface ClientConfig {
   proxy?: ProxyConfig;
   /** Telemetry configuration for usage analytics */
   telemetry?: TelemetryConfig;
+  /** Multiple base URLs for automatic failover */
+  endpoints?: string[];
+  /** Health check interval in ms for failover endpoints */
+  healthCheckInterval?: number;
+  /** Override the built-in API version handler */
+  apiVersionHandler?: ApiVersionHandler;
+  /** Active API version (default 'v1') */
+  apiVersion?: string;
+  /** Versions the backend is known to support */
+  supportedApiVersions?: string[];
+  /** Version to fall back to when the server sends an unsupported one */
+  fallbackApiVersion?: string;
+  /** Automatically migrate requests/responses between versions (default true) */
+  autoMigrateApiVersion?: boolean;
+  /** Endpoints known to be deprecated */
+  deprecatedEndpoints?: DeprecatedEndpointConfig[];
+  /** Called when response headers advertise a new API version */
+  onApiVersionChange?: (oldVersion: string, newVersion: string) => void;
+  /** Called when a deprecation is detected on a response or endpoint */
+  onApiDeprecation?: (warning: DeprecationWarning) => void;
+  /** Per-operation usage analytics (false disables collection) */
+  analytics?: AnalyticsOptions | false;
+  /** Real-time WebSocket configuration; `false` disables real-time */
+  websocket?: WebSocketClientOptions | false;
+  /** Request signing configuration (HMAC headers on every request) */
+  requestSigning?: RequestSignerOptions;
 }
 
 function normalizeClientMode(mode?: ClientMode): 'live' | 'sandbox' {
@@ -149,6 +186,10 @@ export class DorisioClient {
   private hookManager: HookManager;
   private telemetryClient?: TelemetryClient;
   private pluginSystem: PluginSystem;
+  private analytics: Analytics;
+  private failoverManager?: FailoverManager;
+  private realtime: WebSocketClient | null = null;
+  private requestSigner?: RequestSigner;
 
   constructor(config: ClientConfig) {
     const mode = normalizeClientMode(config.mode);
@@ -177,6 +218,7 @@ export class DorisioClient {
       throttleMaxRequests: config.throttleMaxRequests,
       throttleWindowMs: config.throttleWindowMs,
       proxy: config.proxy,
+      websocket: config.websocket,
     };
 
     this.token = config.token;
@@ -201,6 +243,10 @@ export class DorisioClient {
     this.analytics = new Analytics(
       config.analytics === false ? { enabled: false } : config.analytics
     );
+
+    if (config.requestSigning) {
+      this.requestSigner = new RequestSigner(config.requestSigning);
+    }
 
     this.httpClient = new HttpClient(this.config.baseUrl, {
       timeout: this.config.timeout,
@@ -228,6 +274,12 @@ export class DorisioClient {
       onResponse: (response: Response) => {
         this.apiVersionHandler.checkResponseHeaders(response.headers);
       },
+    });
+
+    this.graphql = new GraphQLClient({
+      baseUrl: this.config.baseUrl,
+      token: config.token,
+      mode,
     });
 
     if (this.token) {
@@ -289,7 +341,12 @@ export class DorisioClient {
     this.getFullTransactionHistory = historyMethods.getFullTransactionHistory.bind(this);
     this.getTransactionStats = historyMethods.getTransactionStats.bind(this);
     this.getCreatorEarnings = historyMethods.getCreatorEarnings.bind(this);
-    this.exportTransactionHistory = historyMethods.exportTransactionHistory.bind(this);
+    // `bind` collapses an overloaded function to its last signature, so the
+    // streaming overload is restored through an explicit cast.
+    this.exportTransactionHistory = historyMethods.exportTransactionHistory.bind(
+      this
+    ) as unknown as DorisioClient['exportTransactionHistory'];
+    this.exportTransactionHistoryStream = historyMethods.exportTransactionHistoryStream.bind(this);
 
     this.getBalance = balanceMethods.getBalance.bind(this);
     this.getCreatorPendingPayout = balanceMethods.getCreatorPendingPayout.bind(this);
@@ -353,6 +410,7 @@ export class DorisioClient {
     options?: Partial<RequestOptions>
   ): Promise<ApiResponse<T>> {
     this.apiVersionHandler.checkEndpointDeprecation(path);
+    const startedAt = Date.now();
 
     const initialHeaders = options?.headers ? { ...options.headers } : {};
     const migrated = this.apiVersionHandler.migrateRequest({
@@ -363,9 +421,14 @@ export class DorisioClient {
     });
 
     const requestBody = migrated.body;
-    const requestHeaders = migrated.headers;
     const requestPath = migrated.path;
     const requestMethod = (migrated.method || method) as 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+
+    // Sign the outgoing request when a signing secret is configured: the
+    // signature covers the final method/path/body the transport will send.
+    const requestHeaders = this.requestSigner
+      ? this.requestSigner.signRequest(requestMethod, requestPath, migrated.headers ?? {}, requestBody)
+      : migrated.headers;
 
     const mergedOptions: Partial<RequestOptions> = {
       ...options,
@@ -412,13 +475,55 @@ export class DorisioClient {
       return result as ApiResponse<T>;
     };
 
-    const res = await executeMiddleware(0);
-    return this.apiVersionHandler.migrateResponse(
-      res,
-      this.apiVersionHandler.getCurrentVersion(),
-      this.apiVersionHandler.getCurrentVersion(),
-      { path: requestPath, method: requestMethod }
-    );
+    try {
+      const res = await executeMiddleware(0);
+      this.recordOperation(method, path, startedAt, true);
+      return this.apiVersionHandler.migrateResponse(
+        res,
+        this.apiVersionHandler.getCurrentVersion(),
+        this.apiVersionHandler.getCurrentVersion(),
+        { path: requestPath, method: requestMethod }
+      );
+    } catch (error) {
+      this.recordOperation(method, path, startedAt, false, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Feed one finished operation into the analytics tracker.
+   *
+   * `error` is duck-typed rather than `instanceof`-checked so errors coming from
+   * another realm (bundlers, workers, test doubles) are still classified.
+   */
+  private recordOperation(
+    method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE',
+    path: string,
+    startedAt: number,
+    success: boolean,
+    error?: unknown
+  ): void {
+    let errorCode: string | undefined;
+    let statusCode: number | undefined;
+
+    if (error && typeof error === 'object') {
+      const candidate = error as { code?: unknown; statusCode?: unknown };
+      if (typeof candidate.code === 'string' && candidate.code.length > 0) {
+        errorCode = candidate.code;
+      }
+      if (typeof candidate.statusCode === 'number') {
+        statusCode = candidate.statusCode;
+      }
+    }
+
+    this.analytics.record({
+      method: `${method} ${path}`,
+      latency: Math.max(0, Date.now() - startedAt),
+      success,
+      statusCode,
+      errorCode,
+      errorMessage: error instanceof Error ? error.message : undefined,
+    });
   }
 
   private async executeWithFailover<T>(
@@ -465,7 +570,6 @@ export class DorisioClient {
         if (endpointUrl === endpoints[endpoints.length - 1]) break;
       }
     }
-
     throw lastError ?? new Error('All endpoints failed');
   }
 
@@ -840,14 +944,20 @@ export class DorisioClient {
     confirmedBalance: number;
     transactionCount: number;
   }>;
-  declare exportTransactionHistory: (
-    exportOptions?: {
-      format?: 'csv' | 'json';
-      startDate?: Date;
-      endDate?: Date;
-    },
-    options?: Partial<RequestOptions>
-  ) => Promise<string>;
+  declare exportTransactionHistory: {
+    (
+      exportOptions: historyMethods.TransactionExportOptions & { stream: true },
+      streamOptions?: StreamRequestOptions
+    ): Promise<StreamedResponse>;
+    (
+      exportOptions?: historyMethods.TransactionExportOptions,
+      options?: Partial<RequestOptions>
+    ): Promise<string>;
+  };
+  declare exportTransactionHistoryStream: (
+    exportOptions?: historyMethods.TransactionExportOptions,
+    streamOptions?: StreamRequestOptions
+  ) => Promise<StreamedResponse>;
 
   // ---------------------------------------------------------------------------
   // Balance methods
@@ -1088,6 +1198,81 @@ export class DorisioClient {
    */
   getTracingProvider() {
     return getTracingProvider();
+  }
+
+  /**
+   * Stream any GET endpoint as decoded text chunks without buffering the
+   * response in memory. Chunks arrive as the server sends them; reading
+   * applies backpressure so memory stays constant regardless of size.
+   *
+   * @param path - Request path including query string
+   * @param options - Streaming options (signal, progress, highWaterMark)
+   * @returns A live `ReadableStream<string>` plus transfer stats and abort
+   *
+   * @example
+   * ```ts
+   * const { stream } = await client.streamText('/transactions/export?format=csv&stream=true');
+ *   const reader = stream.getReader();
+ *   for (;;) {
+ *     const { done, value } = await reader.read();
+ *     if (done) break;
+ *     processChunk(value);
+ *   }
+ *   ```
+   */
+  streamText(path: string, options?: StreamRequestOptions): Promise<StreamedResponse> {
+    return this.httpClient.requestTextStream(path, options);
+  }
+
+  /**
+   * Get the API version handler instance (for registering migrations)
+   */
+  getApiVersionHandler(): ApiVersionHandler {
+    return this.apiVersionHandler;
+  }
+
+  /** Get the currently active API version. */
+  getApiVersion(): string {
+    return this.apiVersionHandler.getCurrentVersion();
+  }
+
+  /** Switch the active API version (e.g. after a migration decision). */
+  setApiVersion(version: string): void {
+    this.apiVersionHandler.setCurrentVersion(version);
+  }
+
+  /** Set or replace the request signing configuration. */
+  setRequestSigning(options: RequestSignerOptions): void {
+    this.requestSigner = new RequestSigner(options);
+  }
+
+  /** Get the analytics collector instance. */
+  getAnalytics(): Analytics {
+    return this.analytics;
+  }
+
+  /** Aggregated per-operation analytics snapshot. */
+  getAnalyticsSnapshot(): AnalyticsSnapshot {
+    return this.analytics.getSnapshot();
+  }
+
+  /** Export collected analytics as JSON (`'json'`) or CSV (`'csv'`). */
+  exportAnalytics(format: AnalyticsExportFormat = 'json'): string {
+    return this.analytics.exportMetrics(format);
+  }
+
+  /** Subscribe to analytics events; returns an unsubscribe function. */
+  onAnalyticsEvent(listener: AnalyticsListener): () => void {
+    return this.analytics.subscribe(listener);
+  }
+
+  /**
+   * Emit a debug diagnostic through the configured logger (no-op unless `debug` is set).
+   */
+  private log(message: string, data?: unknown): void {
+    if (this.config.debug && this.config.logger) {
+      this.config.logger(message, data);
+    }
   }
 
   /**

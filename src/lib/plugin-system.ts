@@ -121,9 +121,9 @@ export class PluginSystem {
     // Register plugin hooks
     if (plugin.hooks) {
       Object.entries(plugin.hooks).forEach(([hookName, handler]) => {
-        const hook = hookName as PluginHook;
-        if (this.hooks.has(hook)) {
-          this.hooks.get(hook)!.push(handler);
+        const handlers = this.hooks.get(hookName as PluginHook);
+        if (handlers) {
+          handlers.push(handler);
         }
       });
     }
@@ -155,8 +155,10 @@ export class PluginSystem {
     if (plugin.hooks) {
       Object.keys(plugin.hooks).forEach((hookName) => {
         const hook = hookName as PluginHook;
-        const handlers = this.hooks.get(hook) || [];
-        const handlerIndex = handlers.indexOf(plugin.hooks![hook]!);
+        const handlers = this.hooks.get(hook);
+        const registered = plugin.hooks?.[hook];
+        if (!handlers || !registered) return;
+        const handlerIndex = handlers.indexOf(registered);
         if (handlerIndex >= 0) {
           handlers.splice(handlerIndex, 1);
         }
@@ -221,8 +223,9 @@ export class PluginSystem {
       if (plugin.hooks) {
         Object.entries(plugin.hooks).forEach(([hookName, handler]) => {
           const hook = hookName as PluginHook;
-          if (!composedPlugin.hooks![hook]) {
-            composedPlugin.hooks![hook] = handler;
+          const composedHooks = composedPlugin.hooks;
+          if (composedHooks && !composedHooks[hook]) {
+            composedHooks[hook] = handler;
           }
         });
       }

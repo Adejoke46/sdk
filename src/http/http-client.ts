@@ -6,17 +6,34 @@
  * request fingerprinting, custom headers, and sandbox/mock mode for offline testing.
  */
 
-import { ApiError, DorisioError, ErrorHandler, ErrorHandlerContext } from '../types';
+import { ApiError, DorisioError, ErrorHandler, ErrorHandlerContext, TimeoutError } from '../types';
 import { InterceptorManager } from './interceptors';
 import { generateRequestId, isRequestIdempotent, RetryConflictError } from './retry-manager';
+
+/** A streamed response: a live text stream, transfer stats, and an abort handle. */
+export interface StreamedResponse {
+  /** Decoded text chunks as they arrive; backpressure-aware. */
+  stream: ReadableStream<string>;
+  /** Live transfer statistics (bytes/chunks/duration). */
+  stats: {
+    readonly totalBytes: number;
+    readonly chunks: number;
+    readonly durationMs: number;
+  };
+  /** Abort the underlying transfer; the stream errors with an AbortError. */
+  abort: () => void;
+}
 import { MockRouter, type SandboxHistoryEntry } from '../sandbox/mock-router';
 import { RequestQueue } from './request-queue';
 import { OfflineQueue } from './offline-queue';
 import { MetricsCollector, type MetricsSummary, type MetricsCallback } from '../lib/metrics';
 import { ThrottleManager } from './throttle-manager';
-import { HookManager, type HookContext, type ResponseContext } from '../lib/hooks';
+import { HookManager, type HookContext } from '../lib/hooks';
 import { StreamHandler, type StreamOptions, type StreamResult, isLargeResponse } from './stream-handler';
+import { ConnectionPool, type ConnectionPoolOptions } from './connection-pool';
+import { JsonSerializer, type Serializer } from './serializer';
 import { getTracingProvider, SpanStatus } from '../lib/telemetry';
+import type { StreamRequestOptions } from '../types/stream';
 
 export type HttpClientMode = 'live' | 'sandbox' | 'production';
 
@@ -48,6 +65,8 @@ export interface RequestOptions {
    * Optional name of the calling SDK method for logging / diagnostics.
    */
   methodName?: string;
+  /** Per-response callback invoked once per fetch attempt. */
+  onResponse?: (response: Response) => void;
   /**
    * Enable streaming mode for large responses. Allows processing chunks
    * without loading entire response into memory.
@@ -111,6 +130,12 @@ export interface HttpClientOptions {
   hookManager?: HookManager;
   /** Proxy configuration */
   proxy?: ProxyConfig;
+  /** Connection pool sizing (defaults: maxConnections 10, idleTimeoutMs 30s). */
+  connectionPool?: ConnectionPoolOptions;
+  /** Custom serializer for request/response bodies (default: JSON). */
+  serializer?: Serializer;
+  /** Per-response callback (used by DorisioClient for API version header checks). */
+  onResponse?: (response: Response) => void;
 }
 
 export interface ProxyConfig {
@@ -221,6 +246,12 @@ export class HttpClient {
   private hookManager?: HookManager;
   private proxy?: ProxyConfig;
   private streamHandler: StreamHandler;
+  /** Limits concurrent in-flight fetches (single lease per attempt). */
+  private readonly connectionPool: ConnectionPool;
+  /** Pluggable request/response body serialization. */
+  private readonly serializer: Serializer;
+  /** Per-response callback registered by DorisioClient (API version header checks). */
+  private onResponse?: (response: Response) => void;
 
   constructor(baseUrl: string, options?: HttpClientOptions) {
     this.baseUrl = baseUrl.replace(/\/$/, '');
@@ -263,21 +294,6 @@ export class HttpClient {
       throw new Error('deduplicationWindow must be greater than or equal to zero');
     }
 
-    if (options?.enableRequestQueue) {
-      this.requestQueue = new RequestQueue({
-        maxConcurrentRequests: options.maxConcurrentRequests,
-      });
-    }
-
-    if (options?.enableOfflineQueue) {
-      this.offlineQueue = new OfflineQueue();
-    }
-
-    this.metricsCollector = new MetricsCollector({
-      enabled: options?.enableMetrics ?? false,
-      callback: options?.metricsCallback,
-    });
-
     if (options?.enableThrottling) {
       this.throttleManager = new ThrottleManager({
         maxRequests: options.throttleMaxRequests,
@@ -288,6 +304,12 @@ export class HttpClient {
     this.hookManager = options?.hookManager;
     this.proxy = options?.proxy;
     this.streamHandler = new StreamHandler();
+    this.connectionPool = new ConnectionPool({
+      maxConnections: options?.connectionPool?.maxConnections,
+      idleTimeoutMs: options?.connectionPool?.idleTimeoutMs,
+    });
+    this.serializer = options?.serializer ?? new JsonSerializer();
+    this.onResponse = options?.onResponse;
   }
 
   /**
@@ -296,12 +318,6 @@ export class HttpClient {
   private log(message: string, data?: unknown): void {
     if (!this.debug) return;
     this.logger(message, data);
-  }
-
-  private log(message: string, data?: unknown): void {
-    if (this.debug) {
-      this.logger(message, data);
-    }
   }
 
   /**
@@ -519,27 +535,6 @@ export class HttpClient {
       success = true;
       statusCode = 200;
       return result;
-    };
-
-    const executeWithQueue = (): Promise<T> => {
-      if (this.requestQueue) {
-        return this.requestQueue.enqueue(executeInternal);
-      }
-      return executeInternal();
-    };
-
-    const executeWithOffline = (): Promise<T> => {
-      if (this.offlineQueue) {
-        return this.offlineQueue.handleRequest(options.method, path, executeWithQueue);
-      }
-      return executeWithQueue();
-    };
-
-    try {
-      const result = await executeWithOffline();
-      success = true;
-      statusCode = 200;
-      return result;
     } catch (error) {
       if (error instanceof ApiError && error.statusCode !== undefined) {
         statusCode = error.statusCode;
@@ -646,7 +641,9 @@ export class HttpClient {
     if (this.proxy?.url && typeof globalThis.process !== 'undefined') {
       try {
         // Dynamic import to avoid bundling undici in browser builds
-        const undici = await (Function('return import("undici")')() as Promise<typeof import('undici')>);
+        const undici = await (Function('return import("undici")')() as Promise<{
+          ProxyAgent: new (options: { uri: string; requestTls?: { rejectUnauthorized?: boolean } }) => unknown;
+        }>);
         (fetchOptions as Record<string, unknown>).dispatcher = new undici.ProxyAgent({
           uri: this.proxy.url,
           requestTls: { rejectUnauthorized: this.proxy.rejectUnauthorized ?? true },
@@ -715,10 +712,11 @@ export class HttpClient {
               }
             }
           }
+          const errorCode = typeof error.code === 'string' ? error.code : undefined;
           throw new ApiError(
             String(error.error) || 'Request failed',
             response.status,
-            error.code,
+            errorCode,
             retryAfter,
             options.requestId
           );
@@ -893,6 +891,216 @@ export class HttpClient {
   }
 
   /**
+   * Make a streaming HTTP request and return the body as a `ReadableStream`
+   * of decoded text chunks (Issue #120).
+   *
+   * The response is **never buffered**: each network chunk is decoded with a
+   * streaming `TextDecoder` (multi-byte characters spanning chunks are
+   * stitched) and enqueued on the returned stream. Reading pauses and
+   * resumes with the consumer — a slow reader naturally applies
+   * backpressure — so memory stays O(chunkSize) regardless of export size.
+   *
+   * Works in Node.js >= 18 and modern browsers (global `ReadableStream`).
+   *
+   * @param path - Request path (query string included)
+   * @param options - Streaming request options
+   * @returns The stream plus transfer metadata and an abort handle
+   */
+  async requestTextStream(
+    path: string,
+    options: StreamRequestOptions = {}
+  ): Promise<StreamedResponse> {
+    const startTime = Date.now();
+    const requestId =
+      options.requestId ??
+      (this.requestIdGenerator ? this.requestIdGenerator() : generateRequestId('stream'));
+    const controller = new AbortController();
+
+    // Streaming transfer state, shared by the fetch phase and the body-read
+    // phase that follows it.
+    let aborted = false;
+    let upstreamReader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+    let activeController: ReadableStreamDefaultController<string> | undefined;
+
+    const abortError = () => {
+      const error = new Error('Streaming request aborted');
+      error.name = 'AbortError';
+      return error;
+    };
+
+    // Error the consumer-facing controller directly so caller aborts and
+    // mid-stream failures reject pending reads rather than quietly closing.
+    const fail = (error: unknown) => {
+      if (!activeController) return;
+      try {
+        activeController.error(error);
+      } catch {
+        // already closed or errored — nothing left to do
+      }
+    };
+
+    const onExternalAbort = () => {
+      aborted = true;
+      controller.abort();
+      fail(abortError());
+      void upstreamReader?.cancel().catch(() => undefined);
+    };
+    options.signal?.addEventListener('abort', onExternalAbort, { once: true });
+
+    const headers: Record<string, string> = {
+      ...this.defaultHeaders,
+      ...options.headers,
+      'X-Request-Id': requestId,
+    };
+
+    const timeoutMs = options.timeout ?? this.timeout;
+    const signal = controller.signal;
+
+    // The timeout only covers time-to-headers. Once a response exists the
+    // transfer is governed by the consumer and by the abort signal — keeping a
+    // timer armed for the whole transfer would kill legitimate long exports.
+    let timedOut = false;
+    const timeoutHandle = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, timeoutMs);
+
+    let response: Response;
+    try {
+      response = await fetch(`${this.baseUrl}${path}`, {
+        method: 'GET',
+        headers,
+        signal,
+      });
+    } catch (error) {
+      clearTimeout(timeoutHandle);
+      options.signal?.removeEventListener('abort', onExternalAbort);
+      if (timedOut) {
+        throw new TimeoutError(`Streaming request timed out after ${timeoutMs}ms`);
+      }
+      throw error;
+    }
+    clearTimeout(timeoutHandle);
+
+    this.onResponse?.(response);
+    this.log('[DORISIO] stream response', {
+      method: 'GET',
+      path,
+      status: response.status,
+      requestId,
+    });
+
+    if (!response.ok) {
+      options.signal?.removeEventListener('abort', onExternalAbort);
+      let error: Record<string, unknown> = {};
+      try {
+        const text = await response.text();
+        error = text ? this.serializer.deserialize<Record<string, unknown>>(text) : {};
+      } catch {
+        // ignore body parse failures — status is the primary signal
+      }
+      const errorCode = typeof error.code === 'string' ? error.code : undefined;
+      throw new ApiError(
+        String(error.error) || `Streaming request failed with status ${response.status}`,
+        response.status,
+        errorCode,
+        undefined,
+        requestId
+      );
+    }
+
+    const body = response.body;
+    if (!body) {
+      options.signal?.removeEventListener('abort', onExternalAbort);
+      throw new ApiError('Streaming is not supported by this runtime', 502, undefined, undefined, requestId);
+    }
+
+    const contentLength = response.headers?.get?.('content-length');
+    const totalBytes = contentLength ? parseInt(contentLength, 10) : undefined;
+    const decoder = new TextDecoder();
+    const highWaterMark = Math.max(1, options.highWaterMark ?? 4);
+
+    let bytesReceived = 0;
+    let chunksDelivered = 0;
+
+    const detach = () => options.signal?.removeEventListener('abort', onExternalAbort);
+
+    const stream = new ReadableStream<string>(
+      {
+        // Pull-driven: the body is read one chunk at a time, and only while
+        // the consumer is asking for data, up to `highWaterMark` chunks ahead.
+        // That is what keeps memory constant for arbitrarily large exports and
+        // lets a slow consumer throttle the transfer instead of buffering it.
+        async pull(controller) {
+          activeController = controller;
+          try {
+            if (aborted) throw abortError();
+            upstreamReader ??= body.getReader();
+            const result = await upstreamReader.read();
+            const chunk = result.value;
+            if (aborted) throw abortError();
+
+            if (result.done || !chunk) {
+              const tail = decoder.decode();
+              if (tail) controller.enqueue(tail);
+              detach();
+              controller.close();
+              return;
+            }
+
+            bytesReceived += chunk.byteLength;
+            chunksDelivered += 1;
+
+            if (options.onProgress) {
+              options.onProgress({
+                bytesReceived,
+                totalBytes,
+                chunkSize: chunk.byteLength,
+                percentComplete:
+                  totalBytes && totalBytes > 0
+                    ? Math.min(100, (bytesReceived / totalBytes) * 100)
+                    : undefined,
+              });
+            }
+
+            // `stream: true` holds an incomplete multi-byte sequence back until
+            // the bytes that finish it arrive in a following chunk.
+            const text = decoder.decode(chunk, { stream: true });
+            if (text) controller.enqueue(text);
+          } catch (error) {
+            detach();
+            // Rejecting pull() errors the readable stream, so a mid-stream
+            // network failure surfaces on the consumer's pending read().
+            throw error;
+          }
+        },
+        async cancel(reason) {
+          detach();
+          aborted = true;
+          await upstreamReader?.cancel(reason);
+        },
+      },
+      { highWaterMark }
+    );
+
+    return {
+      stream,
+      stats: {
+        get totalBytes() {
+          return bytesReceived;
+        },
+        get chunks() {
+          return chunksDelivered;
+        },
+        get durationMs() {
+          return Date.now() - startTime;
+        },
+      },
+      abort: onExternalAbort,
+    };
+  }
+
+  /**
    * Make a streaming HTTP request
    *
    * Processes large responses in chunks to reduce memory usage.
@@ -1005,9 +1213,5 @@ export class HttpClient {
    */
   getTracingProvider() {
     return getTracingProvider();
-  }
-
-  private log(message: string, data: unknown): void {
-    if (this.debug) this.logger(message, data);
   }
 }

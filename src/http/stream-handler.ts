@@ -49,8 +49,6 @@ export class StreamHandler {
 
     this.startTime = Date.now();
     const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
 
     try {
       let totalBytes = 0;
@@ -59,7 +57,8 @@ export class StreamHandler {
       const contentLength = response.headers.get('content-length');
       const totalExpectedBytes = contentLength ? parseInt(contentLength, 10) : undefined;
 
-      while (true) {
+      // Standard read-until-done loop; `for (;;)` is the lint-friendly form.
+      for (;;) {
         const { done, value } = await reader.read();
 
         if (done) break;
@@ -69,9 +68,6 @@ export class StreamHandler {
         totalBytes += value.length;
         this.totalBytes += value.length;
         this.chunksProcessed++;
-
-        // Decode and buffer the chunk
-        buffer += decoder.decode(value, { stream: true });
 
         // Process progress callback
         if (options.progressHandler) {
@@ -88,12 +84,6 @@ export class StreamHandler {
 
         // Call chunk handler for processing
         await options.chunkHandler(value);
-      }
-
-      // Flush remaining buffer
-      if (buffer) {
-        const remaining = new TextEncoder().encode(buffer);
-        await options.chunkHandler(remaining);
       }
 
       return {

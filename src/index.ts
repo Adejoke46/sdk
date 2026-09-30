@@ -57,7 +57,16 @@ export type {
   ErrorInterceptor,
 } from './http/interceptors';
 export type { RequestOptions, HttpClientOptions, HttpClientMode } from './http/http-client';
+export type { StreamedResponse } from './http/http-client';
 export { HttpClient } from './http/http-client';
+
+// Re-export streaming types (Issue #120)
+export type {
+  StreamProgress,
+  StreamChunk,
+  StreamRequestOptions,
+  StreamStats,
+} from './types/stream';
 export { RequestQueue, type RequestQueueOptions } from './http/request-queue';
 export { RequestSigner, type RequestSignerOptions } from './http/request-signer';
 export { ConnectionPool, type ConnectionPoolOptions, type ConnectionPoolStats } from './http/connection-pool';
