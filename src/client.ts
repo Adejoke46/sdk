@@ -9,6 +9,7 @@
 
 import { HttpClient, RequestOptions, type HttpClientMode, type ProxyConfig } from './http/http-client';
 import { FailoverManager, type EndpointConfig } from './http/failover-manager';
+import { ResponseNormalizer } from './http/response-normalizer';
 import { getConfig } from './config';
 import { ApiResponse } from './types/api';
 import {
@@ -412,7 +413,7 @@ export class DorisioClient {
       return result as ApiResponse<T>;
     };
 
-    const res = await executeMiddleware(0);
+    const res = ResponseNormalizer.normalize<T>(await executeMiddleware(0));
     return this.apiVersionHandler.migrateResponse(
       res,
       this.apiVersionHandler.getCurrentVersion(),
