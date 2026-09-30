@@ -343,3 +343,17 @@ export {
 } from './client/batch-operations';
 export type { VerificationStatus } from './client/verification';
 export type { SessionInfo } from './client/auth';
+
+// Re-export plugin system (Issue #137)
+export {
+  PluginSystem,
+  PluginHook,
+  createPlugin,
+  composePlugins,
+  type Plugin,
+  type PluginHookContext,
+  type PluginHookHandler,
+  type InstalledPlugin,
+  type PluginCompositionResult,
+  type PluginStatEntry,
+} from './lib/plugin-system';
