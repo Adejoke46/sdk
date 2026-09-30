@@ -59,6 +59,8 @@ export interface RequestOptions {
    * Optional name of the calling SDK method for logging / diagnostics.
    */
   methodName?: string;
+  /** Parameters used with methodName for cache lookup and invalidation. */
+  cacheParams?: readonly unknown[];
   /**
    * Enable streaming mode for large responses. Allows processing chunks
    * without loading entire response into memory.
@@ -88,6 +90,8 @@ export interface HttpClientOptions {
   /** Reuse an in-flight or recently completed identical request. */
   deduplicateRequests?: boolean;
   deduplicationWindow?: number;
+  /** Optional response cache configuration. */
+  cache?: CacheOptions;
   /** Custom error handler for error recovery strategies */
   errorHandler?: ErrorHandler;
   /** Custom request ID generator function */
@@ -188,6 +192,17 @@ function stableSerialize(value: unknown): string {
   return JSON.stringify(value) ?? 'null';
 }
 
+function cloneCachedValue<T>(value: T): T {
+  if (typeof structuredClone !== 'function') {
+    return value;
+  }
+  try {
+    return structuredClone(value);
+  } catch {
+    return value;
+  }
+}
+
 function sanitize(value: unknown, key = ''): unknown {
   if (/authorization|cookie|token|secret|password|private.?key|api.?key/i.test(key)) {
     return '[REDACTED]';
@@ -228,6 +243,7 @@ export class HttpClient {
   private deduplicateRequests: boolean;
   private deduplicationWindow: number;
   private deduplicationCache = new Map<string, CachedRequest>();
+  private cacheManager: CacheManager;
   private errorHandler?: ErrorHandler;
   private requestIdGenerator?: () => string;
   private requestQueue?: RequestQueue;
@@ -262,6 +278,7 @@ export class HttpClient {
     this.logger = options?.logger ?? ((message, data) => console.debug(message, data));
     this.deduplicateRequests = options?.deduplicateRequests ?? false;
     this.deduplicationWindow = options?.deduplicationWindow ?? 1000;
+    this.cacheManager = new CacheManager(options?.cache);
     this.errorHandler = options?.errorHandler;
     this.requestIdGenerator = options?.requestIdGenerator;
 
@@ -349,6 +366,9 @@ export class HttpClient {
    */
   setHeader(key: string, value: string): void {
     this.defaultHeaders[key] = value;
+    if (key.toLowerCase() === 'authorization') {
+      this.cacheManager.clear();
+    }
   }
 
   /**
@@ -357,6 +377,13 @@ export class HttpClient {
   removeHeader(key: string): void {
     // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
     delete this.defaultHeaders[key];
+    if (key.toLowerCase() === 'authorization') {
+      this.cacheManager.clear();
+    }
+  }
+
+  getCacheManager(): CacheManager {
+    return this.cacheManager;
   }
 
   /**
@@ -410,10 +437,11 @@ export class HttpClient {
    */
   async request<T>(path: string, options: RequestOptions): Promise<T> {
     const startTime = Date.now();
-    const methodName = options.method;
+    const methodName = options.methodName ?? options.method;
     let success = false;
     let statusCode: number | undefined;
     let rateLimited = false;
+    let cacheStatus: 'hit' | 'miss' | undefined;
 
     const requestId =
       options.requestId ??
@@ -465,14 +493,30 @@ export class HttpClient {
           await this.hookManager.executeAfterRequest(hookCtx);
         }
 
-        const key = `${finalOptions.method}:${path}:${stableSerialize(finalOptions.body ?? null)}`;
-        if (this.deduplicateRequests) {
-          const cached = this.deduplicationCache.get(key);
-          if (cached && cached.expiresAt > Date.now()) return cached.promise as Promise<T>;
-          if (cached) this.deduplicationCache.delete(key);
+        const cacheMethod = finalOptions.methodName ?? finalOptions.method;
+        const cacheBaseParams = finalOptions.cacheParams ?? [path, finalOptions.body ?? null];
+        const cacheHeaders = Object.fromEntries(
+          Object.entries({ ...this.defaultHeaders, ...finalOptions.headers })
+            .filter(([header]) => header.toLowerCase() !== 'x-request-id')
+            .sort(([left], [right]) => left.localeCompare(right))
+        );
+        const cacheParams = [...cacheBaseParams, cacheHeaders];
+        const key = `${finalOptions.method}:${path}:${stableSerialize(finalOptions.body ?? null)}:${stableSerialize(cacheHeaders)}`;
+        const isCacheable = finalOptions.method === 'GET' && this.cacheManager.isEnabled();
+
+        if (isCacheable) {
+          const cached = this.cacheManager.get<T>(cacheMethod, cacheParams);
+          if (cached !== undefined) {
+            cacheStatus = 'hit';
+            return (await this.interceptors.executeResponseInterceptors(
+              cloneCachedValue(cached)
+            )) as T;
+          }
+          cacheStatus = 'miss';
         }
 
         const result = await this.executeDeduplication<T>(key, async () => {
+          let response: T;
           if (this.mode === 'sandbox') {
             const mocked = await this.mockRouter.handle(
               finalOptions.method,
@@ -493,12 +537,22 @@ export class HttpClient {
             }
             if (!this.canRecoverFrom(error, path, finalOptions)) throw error;
             try {
-              await this.refreshSessionOnce();
-            } catch {
-              throw error;
+              response = await this.sendWithRetries<T>(path, finalOptions);
+            } catch (error) {
+              if (!this.canRecoverFrom(error, path, finalOptions)) throw error;
+              try {
+                await this.refreshSessionOnce();
+              } catch {
+                throw error;
+              }
+              response = await this.sendWithRetries<T>(path, finalOptions);
             }
-            return await this.sendWithRetries<T>(path, finalOptions);
           }
+
+          if (isCacheable) {
+            this.cacheManager.set(cacheMethod, cacheParams, cloneCachedValue(response));
+          }
+          return response;
         });
         if (this.circuitBreaker) {
           this.circuitBreaker.recordSuccess(path);
@@ -547,6 +601,7 @@ export class HttpClient {
           success,
           statusCode,
           rateLimited,
+          cacheStatus,
         });
       }
     }
@@ -732,7 +787,7 @@ export class HttpClient {
           data = (await (response as { json?: () => Promise<T> }).json?.()) ?? (undefined as T);
         }
 
-        return await this.interceptors.executeResponseInterceptors(data);
+        return data;
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));
         if (lastError instanceof DorisioError && !lastError.requestId && options.requestId) {

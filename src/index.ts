@@ -60,6 +60,8 @@ export type {
 } from './types/interceptors';
 export type { RequestOptions, HttpClientOptions, HttpClientMode } from './http/http-client';
 export { HttpClient } from './http/http-client';
+export { CacheManager } from './cache/cache-manager';
+export type { CacheOptions, CacheStats, CacheStrategy } from './types/cache';
 export { RequestQueue, type RequestQueueOptions } from './http/request-queue';
 export { Batcher, type BatchExecuteOptions, type BatchOperationResult } from './utils/batch';
 export { RequestSigner, type RequestSignerOptions } from './http/request-signer';

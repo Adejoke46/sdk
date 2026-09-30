@@ -92,4 +92,13 @@ describe('MetricsCollector', () => {
     expect(metrics.getMetrics().requests).toBe(0);
     expect(metrics.getMetrics().methodStats).toEqual({});
   });
+
+  it('tracks cache hits and misses', () => {
+    const metrics = new MetricsCollector({ enabled: true });
+
+    metrics.record({ method: 'GET', latency: 0, success: true, cacheStatus: 'hit' });
+    metrics.record({ method: 'GET', latency: 25, success: true, cacheStatus: 'miss' });
+
+    expect(metrics.getMetrics()).toMatchObject({ cacheHits: 1, cacheMisses: 1 });
+  });
 });
