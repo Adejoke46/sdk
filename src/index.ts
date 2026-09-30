@@ -68,6 +68,35 @@ export {
   type OfflineEventListener,
   type QueueProcessedResult,
 } from './http/offline-queue';
+
+// Re-export offline-first storage and sync (Issue #129)
+export { OfflineManager } from './offline/sync';
+export {
+  MemoryStorage,
+  IndexedDBStorage,
+  SQLiteStorage,
+  createStorageBackend,
+} from './offline/storage';
+export type {
+  OfflineConfig,
+  StorageBackendType,
+  QueuedOperation,
+  OperationStatus,
+  OperationType,
+  SyncState,
+  SyncResult,
+  SyncConflict,
+  OfflineSyncEventType,
+  OfflineSyncEventListener,
+  SyncOptions,
+  StorageStats,
+  ConflictResolutionStrategy,
+  IStorageBackend,
+  OperationFilter,
+  OperationMetadata,
+  SyncEventData,
+  StorageBackendOptions,
+} from './types/offline';
 export {
   FailoverManager,
   type EndpointConfig,
