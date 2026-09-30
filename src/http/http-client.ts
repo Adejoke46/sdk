@@ -7,11 +7,15 @@
  */
 
 import { ApiError, DorisioError, ErrorHandler, ErrorHandlerContext } from '../types';
+import type { CacheOptions } from '../types/cache';
+import type { QueueConfig, QueueStats, RequestPriority } from '../types/queue';
+import { CacheManager } from '../cache/cache-manager';
 import { InterceptorManager } from './interceptors';
 import { generateRequestId, isRequestIdempotent, RetryConflictError } from './retry-manager';
 import { CircuitBreaker, type CircuitBreakerConfig, CircuitOpenError } from './circuit-breaker';
 import { MockRouter, type SandboxHistoryEntry } from '../sandbox/mock-router';
 import { RequestQueue } from './request-queue';
+import { PriorityRequestQueue } from '../queue/request-queue';
 import { OfflineQueue } from './offline-queue';
 import { ConnectionPool } from './connection-pool';
 import { JsonSerializer } from './serializer';
@@ -70,6 +74,11 @@ export interface RequestOptions {
    * Streaming options for chunk handling and progress tracking
    */
   streamOptions?: StreamOptions;
+  /**
+   * Relative priority for the priority request queue. Only meaningful when
+   * the queue is enabled; defaults to `'normal'`.
+   */
+  priority?: RequestPriority;
 }
 
 export interface HttpClientOptions {
@@ -128,6 +137,12 @@ export interface HttpClientOptions {
   proxy?: ProxyConfig;
   /** Circuit breaker configuration for failing endpoints */
   circuitBreaker?: CircuitBreakerConfig;
+  /**
+   * Priority request queue configuration. When `enabled` is true, requests
+   * are routed through a bounded concurrency queue that honours per-request
+   * `priority`. Takes precedence over the legacy `enableRequestQueue` flag.
+   */
+  queue?: QueueConfig;
 }
 
 export interface ProxyConfig {
@@ -247,6 +262,7 @@ export class HttpClient {
   private errorHandler?: ErrorHandler;
   private requestIdGenerator?: () => string;
   private requestQueue?: RequestQueue;
+  private priorityQueue?: PriorityRequestQueue;
   private offlineQueue?: OfflineQueue;
   private connectionPool: ConnectionPool;
   private serializer: JsonSerializer;
@@ -285,6 +301,14 @@ export class HttpClient {
     if (options?.enableRequestQueue) {
       this.requestQueue = new RequestQueue({
         maxConcurrentRequests: options.maxConcurrentRequests,
+      });
+    }
+
+    if (options?.queue?.enabled) {
+      this.priorityQueue = new PriorityRequestQueue({
+        maxConcurrent: options.queue.maxConcurrent,
+        prioritize: options.queue.prioritize,
+        maxQueueSize: options.queue.maxQueueSize,
       });
     }
 
@@ -564,6 +588,9 @@ export class HttpClient {
     };
 
     const executeWithQueue = (): Promise<T> => {
+      if (this.priorityQueue) {
+        return this.priorityQueue.enqueue(executeInternal, options.priority ?? 'normal');
+      }
       if (this.requestQueue) {
         return this.requestQueue.enqueue(executeInternal);
       }
@@ -882,6 +909,20 @@ export class HttpClient {
    */
   getRequestQueue(): RequestQueue | undefined {
     return this.requestQueue;
+  }
+
+  /**
+   * Get the priority request queue instance if enabled
+   */
+  getPriorityQueue(): PriorityRequestQueue | undefined {
+    return this.priorityQueue;
+  }
+
+  /**
+   * Get a snapshot of priority request queue statistics
+   */
+  getQueueStats(): QueueStats | undefined {
+    return this.priorityQueue?.getStats();
   }
 
   /**

@@ -16,6 +16,7 @@ import {
 import { FailoverManager, type EndpointConfig } from './http/failover-manager';
 import { ResponseNormalizer } from './http/response-normalizer';
 import { getConfig } from './config';
+import { localizeError } from './i18n';
 import { ApiResponse } from './types/api';
 import {
   Creator,
@@ -50,6 +51,8 @@ import { Batcher } from './utils/batch';
 import { GraphQLClient } from './graphql/graphql-client';
 import { BatchProcessorOptions, BatchResult } from './http/batch-processor';
 import { ErrorHandler, Middleware } from './types/errors';
+import type { QueueConfig, QueueStats } from './types/queue';
+import type { PriorityRequestQueue } from './queue/request-queue';
 import { TelemetryClient, type TelemetryConfig } from './telemetry';
 import { PluginSystem, type Plugin } from './lib/plugin-system';
 import { Analytics } from './lib/analytics';
@@ -107,6 +110,12 @@ export interface ClientConfig {
   enableRequestQueue?: boolean;
   /** Maximum concurrent requests in flight when request queue is enabled (default: 5) */
   maxConcurrentRequests?: number;
+  /**
+   * Priority request queue configuration. When enabled, requests are queued
+   * with bounded concurrency and served by priority. Individual requests opt
+   * into a priority via their request options (e.g. `{ priority: 'high' }`).
+   */
+  queue?: QueueConfig;
   /** Enable offline mutation queue */
   enableOfflineQueue?: boolean;
   /** Enable performance metrics collection */
@@ -190,6 +199,7 @@ export class DorisioClient {
       requestIdGenerator: config.requestIdGenerator,
       enableRequestQueue: config.enableRequestQueue,
       maxConcurrentRequests: config.maxConcurrentRequests,
+      queue: config.queue,
       enableOfflineQueue: config.enableOfflineQueue,
       enableMetrics: config.enableMetrics,
       metricsCallback: config.metricsCallback,
@@ -240,6 +250,7 @@ export class DorisioClient {
       requestIdGenerator: config.requestIdGenerator,
       enableRequestQueue: config.enableRequestQueue,
       maxConcurrentRequests: config.maxConcurrentRequests,
+      queue: config.queue,
       enableOfflineQueue: config.enableOfflineQueue,
       enableMetrics: config.enableMetrics,
       metricsCallback: config.metricsCallback,
@@ -752,6 +763,21 @@ export class DorisioClient {
    */
   getThrottleManager(): ThrottleManager | undefined {
     return this.httpClient.getThrottleManager();
+  }
+
+  /**
+   * Get the priority request queue instance if enabled
+   */
+  getPriorityQueue(): PriorityRequestQueue | undefined {
+    return this.httpClient.getPriorityQueue();
+  }
+
+  /**
+   * Get a snapshot of priority request queue statistics, or `undefined` when
+   * the queue is not enabled.
+   */
+  getQueueStats(): QueueStats | undefined {
+    return this.httpClient.getQueueStats();
   }
 
   /**

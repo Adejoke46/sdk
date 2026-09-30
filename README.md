@@ -326,6 +326,39 @@ const creator = await client.getCreator('creator-123', {
 });
 ```
 
+### Request Queueing & Prioritization
+
+Bound how many requests run at once and make sure important calls are served first. When the concurrency limit is reached, further requests wait in a priority queue; higher priority requests are dequeued before lower priority ones, with FIFO ordering within each level.
+
+```typescript
+const client = new DorisioClient({
+  baseUrl: 'https://api.dorisio.com',
+  token: 'my-token',
+  queue: {
+    enabled: true,
+    maxConcurrent: 3, // at most 3 requests in flight
+    prioritize: true, // high > normal > low
+    maxQueueSize: 1000, // backpressure: reject beyond this depth
+  },
+});
+
+// Per-request priority (defaults to 'normal')
+const tip = await client.createTip(data, { priority: 'high' });
+const history = await client.getTransactionHistory({ page: 1 }, { priority: 'low' });
+
+// Inspect queue statistics
+const stats = client.getQueueStats();
+// { queueDepth, inFlight, processed, rejected, totalWaitTime, maxWaitTime, averageWaitTime }
+```
+
+Semantics:
+
+- **Ordering**: `high` > `normal` > `low`; requests of equal priority run in FIFO order.
+- **Concurrency**: at most `maxConcurrent` requests are in flight at any time.
+- **Backpressure**: the waiting queue is bounded by `maxQueueSize` (default `1000`). When full, new requests reject with `QueueFullError` instead of growing memory without bound.
+- **`prioritize: false`**: plain FIFO across all priorities (still respecting `maxConcurrent`).
+- **`enabled: false`** (default): requests pass through with no queueing overhead.
+
 ### Batch Operations & Partial Failure Handling
 
 Perform bulk operations with concurrency limits, exponential backoff retries, and detailed breakdown of successful and failed items:

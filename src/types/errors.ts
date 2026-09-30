@@ -94,6 +94,25 @@ export class RateLimitError extends DorisioError {
 }
 
 /**
+ * Backpressure error raised when a request is rejected because the request
+ * queue has reached its configured `maxQueueSize`.
+ */
+export class QueueFullError extends DorisioError {
+  public readonly maxQueueSize: number;
+
+  constructor(maxQueueSize: number, message?: string, requestId?: string) {
+    super(
+      message ?? `Request queue is full (maxQueueSize: ${maxQueueSize})`,
+      429,
+      'QUEUE_FULL',
+      requestId
+    );
+    this.name = 'QueueFullError';
+    this.maxQueueSize = maxQueueSize;
+  }
+}
+
+/**
  * Network/timeout errors
  */
 export class TimeoutError extends DorisioError {

@@ -63,6 +63,11 @@ export { HttpClient } from './http/http-client';
 export { CacheManager } from './cache/cache-manager';
 export type { CacheOptions, CacheStats, CacheStrategy } from './types/cache';
 export { RequestQueue, type RequestQueueOptions } from './http/request-queue';
+export {
+  PriorityRequestQueue,
+  type PriorityRequestQueueOptions,
+} from './queue/request-queue';
+export type { QueueConfig, QueueStats, RequestPriority } from './types/queue';
 export { Batcher, type BatchExecuteOptions, type BatchOperationResult } from './utils/batch';
 export { RequestSigner, type RequestSignerOptions } from './http/request-signer';
 export { ConnectionPool, type ConnectionPoolOptions, type ConnectionPoolStats } from './http/connection-pool';
@@ -203,6 +208,7 @@ export {
   WalletVerificationError,
   PaymentError,
   RateLimitError,
+  QueueFullError,
 } from './types/errors';
 export type {
   ErrorHandler,

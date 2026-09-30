@@ -42,6 +42,7 @@ export type {
 export type { TipRequest, CreateTipRequest } from './requests';
 export type { CacheOptions, CacheStats, CacheStrategy } from './cache';
 export type { ApiResponse, PaginationMeta, PaginatedResponse } from './api';
+export type { QueueConfig, QueueStats, RequestPriority } from './queue';
 export {
   DorisioError,
   AuthError,
@@ -49,6 +50,7 @@ export {
   PaymentError,
   ValidationError,
   RateLimitError,
+  QueueFullError,
   TimeoutError,
   ApiError,
   AuthenticationError,
