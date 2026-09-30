@@ -108,10 +108,15 @@ export function useCreateTip(): UseCreateTipState & UseCreateTipActions {
     setState(fn);
   }, []);
 
-  const start = (step: UseCreateTipState['step']) => () =>
-    safeSetState((s) => ({ ...s, loading: true, step, error: undefined }));
-  const fail = (error: string) =>
-    safeSetState((s) => ({ ...s, error, step: 'error', loading: false }));
+  const start = useCallback(
+    (step: UseCreateTipState['step']) => () =>
+      safeSetState((s) => ({ ...s, loading: true, step, error: undefined })),
+    [safeSetState]
+  );
+  const fail = useCallback(
+    (error: string) => safeSetState((s) => ({ ...s, error, step: 'error', loading: false })),
+    [safeSetState]
+  );
 
   const createTip = useCallback(
     (data: CreateTipRequest): Promise<Transaction> =>
@@ -131,7 +136,7 @@ export function useCreateTip(): UseCreateTipState & UseCreateTipActions {
             return tip;
           })
       ),
-    [client, setError, setIsLoading, safeSetState]
+    [client, setError, setIsLoading, safeSetState, start, fail]
   );
 
   const buildTransaction = useCallback(
@@ -152,7 +157,7 @@ export function useCreateTip(): UseCreateTipState & UseCreateTipActions {
             return result;
           })
       ),
-    [client, setError, setIsLoading, safeSetState]
+    [client, setError, setIsLoading, safeSetState, start, fail]
   );
 
   const submitTransaction = useCallback(
@@ -179,7 +184,7 @@ export function useCreateTip(): UseCreateTipState & UseCreateTipActions {
             return result;
           })
       ),
-    [client, setError, setIsLoading, safeSetState]
+    [client, setError, setIsLoading, safeSetState, start, fail]
   );
 
   const confirmTransaction = useCallback(
@@ -200,7 +205,7 @@ export function useCreateTip(): UseCreateTipState & UseCreateTipActions {
             return tip;
           })
       ),
-    [client, setError, setIsLoading, safeSetState]
+    [client, setError, setIsLoading, safeSetState, start, fail]
   );
 
   const reset = useCallback(() => {
