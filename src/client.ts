@@ -402,6 +402,30 @@ export class DorisioClient {
     this.graphql.setToken(token);
   }
 
+  addRequestInterceptor(interceptor: RequestInterceptor): InterceptorId {
+    return this.httpClient.getInterceptors().addRequestInterceptor(interceptor);
+  }
+
+  removeRequestInterceptor(id: InterceptorId): boolean {
+    return this.httpClient.getInterceptors().removeRequestInterceptor(id);
+  }
+
+  addResponseInterceptor(interceptor: ResponseInterceptor): InterceptorId {
+    return this.httpClient.getInterceptors().addResponseInterceptor(interceptor);
+  }
+
+  removeResponseInterceptor(id: InterceptorId): boolean {
+    return this.httpClient.getInterceptors().removeResponseInterceptor(id);
+  }
+
+  addErrorInterceptor(interceptor: ErrorInterceptor): InterceptorId {
+    return this.httpClient.getInterceptors().addErrorInterceptor(interceptor);
+  }
+
+  removeErrorInterceptor(id: InterceptorId): boolean {
+    return this.httpClient.getInterceptors().removeErrorInterceptor(id);
+  }
+
   /**
    * Clear authentication token
    */

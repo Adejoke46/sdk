@@ -650,6 +650,8 @@ export class HttpClient {
     }
 
     let lastError: Error | null = null;
+    let interceptedError: unknown;
+    let hasInterceptedError = false;
     const attempts = options.retries ?? this.retryAttempts;
     const canRetry = isRequestIdempotent({
       method: options.method,
@@ -736,7 +738,8 @@ export class HttpClient {
         if (lastError instanceof DorisioError && !lastError.requestId && options.requestId) {
           lastError.requestId = options.requestId;
         }
-        await this.interceptors.executeErrorInterceptors(lastError);
+        interceptedError = await this.interceptors.executeErrorInterceptors(lastError);
+        hasInterceptedError = true;
 
         // Don't retry requests the caller cancelled (superseded hook
         // requests) — retrying an aborted fetch just burns attempts.
@@ -745,7 +748,7 @@ export class HttpClient {
           lastError.name === 'AbortError' ||
           (lastError as { code?: number }).code === 20
         ) {
-          throw lastError;
+          throw interceptedError;
         }
 
         // Call custom error handler if registered
@@ -784,12 +787,12 @@ export class HttpClient {
           error.statusCode >= 400 &&
           error.statusCode < 500
         ) {
-          throw error;
+          throw interceptedError;
         }
 
         // Never retry non-idempotent calls (avoids duplicate tips/charges)
         if (!canRetry) {
-          throw lastError;
+          throw interceptedError;
         }
 
         if (attempt < attempts - 1) {
@@ -800,7 +803,9 @@ export class HttpClient {
       }
     }
 
-    throw lastError || new Error('Request failed after retries');
+    throw hasInterceptedError
+      ? interceptedError
+      : lastError ?? new Error('Request failed after retries');
   }
 
   /**
