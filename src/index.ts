@@ -19,7 +19,7 @@ export {
   type GraphQLRequestOptions,
   type GraphQLResponse,
   type GraphQLErrorItem,
-  type GraphQLErrorLocation,
+  type GraphQMErrorLocation,
   type GraphQLCacheOptions,
   type CacheEntry,
 } from './graphql/graphql-client';
@@ -158,6 +158,14 @@ export {
   type SentryEvent,
 } from './integrations/sentry';
 
+// Re-export circuit breaker
+export {
+  CircuitBreaker,
+  CircuitBreakerOpenError,
+  type CircuitBreakerOptions,
+  type CircuitState,
+  type CircuitBreakerStats,
+} from './http/circuit-breaker';
 
 // Re-export real-time sync (Issue #58)
 export {

@@ -30,7 +30,7 @@ export interface PaginationMeta {
 /**
  * Paginated response
  */
-export interface PaginatedResponse<T> extends ApiResponse<T[]> {
+export interface PaginatedResponse<T> extends ApiResponse<T> {
   meta?: PaginationMeta;
 }
 
@@ -88,3 +88,20 @@ export interface Wallet {
   verified: boolean;
   createdAt: string;
 }
+
+/**
+ * Circuit breaker configuration
+ */
+export interface CircuitBreakerConfig {
+  /** Number of consecutive failures before the circuit opens. Defaults to 5. */
+  failureThreshold?: number;
+  /** Time in milliseconds to wait before attempting recovery. Defaults to 60000. */
+  resetTimeout?: number;
+  /** Number of successful requests required in half-open state to close the circuit. Defaults to 1. */
+  halfOpenRequests?: number;
+}
+
+/**
+ * Circuit breaker state
+ */
+export type CircuitBreakerState = 'closed' | 'open' | 'half-open';
