@@ -9,8 +9,7 @@ export const SDK_VERSION = '0.1.0';
 
 // Re-export client and utilities
 export { DorisioClient, type ClientConfig } from './client';
-export { ERROR_TRANSLATIONS, localizeError } from './i18n';
-export type { ErrorI18nMetadata, ErrorTranslationKey, I18nConfig, I18nLanguage } from './types/i18n';
+export type { CompressionAlgorithm, RequestCompressionConfig } from './http/compress';
 
 // Re-export GraphQL client and queries
 export {
@@ -21,7 +20,7 @@ export {
   type GraphQLRequestOptions,
   type GraphQLResponse,
   type GraphQLErrorItem,
-  type GraphQLErrorLocation,
+  type GraphQMErrorLocation,
   type GraphQLCacheOptions,
   type CacheEntry,
 } from './graphql/graphql-client';
@@ -70,6 +69,35 @@ export {
   type OfflineEventListener,
   type QueueProcessedResult,
 } from './http/offline-queue';
+
+// Re-export offline-first storage and sync (Issue #129)
+export { OfflineManager } from './offline/sync';
+export {
+  MemoryStorage,
+  IndexedDBStorage,
+  SQLiteStorage,
+  createStorageBackend,
+} from './offline/storage';
+export type {
+  OfflineConfig,
+  StorageBackendType,
+  QueuedOperation,
+  OperationStatus,
+  OperationType,
+  SyncState,
+  SyncResult,
+  SyncConflict,
+  OfflineSyncEventType,
+  OfflineSyncEventListener,
+  SyncOptions,
+  StorageStats,
+  ConflictResolutionStrategy,
+  IStorageBackend,
+  OperationFilter,
+  OperationMetadata,
+  SyncEventData,
+  StorageBackendOptions,
+} from './types/offline';
 export {
   FailoverManager,
   type EndpointConfig,
@@ -131,6 +159,14 @@ export {
   type SentryEvent,
 } from './integrations/sentry';
 
+// Re-export circuit breaker
+export {
+  CircuitBreaker,
+  CircuitBreakerOpenError,
+  type CircuitBreakerOptions,
+  type CircuitState,
+  type CircuitBreakerStats,
+} from './http/circuit-breaker';
 
 // Re-export real-time sync (Issue #58)
 export {
