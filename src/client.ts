@@ -62,12 +62,15 @@ import {
 import type { ErrorReporter } from './lib/error-reporter';
 import { HookManager, type HookRegistration } from './lib/hooks';
 import { ThrottleManager } from './http/throttle-manager';
+import type { ValidationSchemas } from './types/validation';
 
 export type ClientMode = 'sandbox' | 'live' | 'production';
 
 export interface ClientConfig {
   baseUrl: string;
   token?: string;
+  /** Zod or Joi schemas for request bodies and API responses. */
+  schemas?: ValidationSchemas;
   timeout?: number;
   /**
    * `sandbox` — all requests return deterministic mocks (no network).
@@ -158,6 +161,7 @@ export class DorisioClient {
       baseUrl: config.baseUrl.replace(/\/$/, ''),
       token: config.token,
       mode,
+      schemas: config.schemas,
       sandboxSeed: config.sandboxSeed,
       sandboxLatency: config.sandboxLatency,
       sandboxErrorRate: config.sandboxErrorRate,
@@ -206,6 +210,7 @@ export class DorisioClient {
       timeout: this.config.timeout,
       retryAttempts: getConfig().retryAttempts,
       mode,
+      schemas: config.schemas,
       sandboxSeed: config.sandboxSeed,
       sandboxLatency: config.sandboxLatency,
       sandboxErrorRate: config.sandboxErrorRate,
@@ -447,6 +452,7 @@ export class DorisioClient {
           timeout: this.config.timeout,
           retryAttempts: getConfig().retryAttempts,
           mode: this.mode,
+          schemas: this.config.schemas,
         });
         if (this.token) {
           tempClient.setHeader('Authorization', `Bearer ${this.token}`);

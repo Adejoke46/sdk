@@ -58,6 +58,9 @@ export type {
 } from './http/interceptors';
 export type { RequestOptions, HttpClientOptions, HttpClientMode } from './http/http-client';
 export { HttpClient } from './http/http-client';
+export { validateSchema } from './validation/schema-validator';
+export { SchemaValidationError } from './types/validation';
+export type { ValidationSchema, ValidationSchemas, SchemaValidationIssue } from './types/validation';
 export { RequestQueue, type RequestQueueOptions } from './http/request-queue';
 export { RequestSigner, type RequestSignerOptions } from './http/request-signer';
 export { ConnectionPool, type ConnectionPoolOptions, type ConnectionPoolStats } from './http/connection-pool';

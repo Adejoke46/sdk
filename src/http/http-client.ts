@@ -17,6 +17,10 @@ import { ThrottleManager } from './throttle-manager';
 import { HookManager, type HookContext, type ResponseContext } from '../lib/hooks';
 import { StreamHandler, type StreamOptions, type StreamResult, isLargeResponse } from './stream-handler';
 import { getTracingProvider, SpanStatus } from '../lib/telemetry';
+import { validateSchema } from '../validation/schema-validator';
+import type { ValidationSchemas } from '../types/validation';
+import { JsonSerializer, type Serializer } from './serializer';
+import { ConnectionPool, type ConnectionPoolOptions } from './connection-pool';
 
 export type HttpClientMode = 'live' | 'sandbox' | 'production';
 
@@ -24,6 +28,10 @@ export interface RequestOptions {
   method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   headers?: Record<string, string>;
   body?: Record<string, unknown>;
+  /** Override the client's schemas for this request. */
+  schemas?: ValidationSchemas;
+  /** Called with the raw response before deserialization. */
+  onResponse?: (response: Response) => void;
   timeout?: number;
   retries?: number;
   /**
@@ -63,6 +71,11 @@ export interface HttpClientOptions {
   timeout?: number;
   retryAttempts?: number;
   headers?: Record<string, string>;
+  /** Validate and transform request bodies and responses. */
+  schemas?: ValidationSchemas;
+  onResponse?: (response: Response) => void;
+  serializer?: Serializer;
+  connectionPool?: ConnectionPoolOptions;
   /**
    * `sandbox` bypasses fetch and returns deterministic mocks.
    * `live` / `production` hit the real network.
@@ -221,6 +234,10 @@ export class HttpClient {
   private hookManager?: HookManager;
   private proxy?: ProxyConfig;
   private streamHandler: StreamHandler;
+  private readonly schemas?: ValidationSchemas;
+  private readonly serializer: Serializer;
+  private readonly connectionPool: ConnectionPool;
+  private readonly onResponse?: (response: Response) => void;
 
   constructor(baseUrl: string, options?: HttpClientOptions) {
     this.baseUrl = baseUrl.replace(/\/$/, '');
@@ -230,6 +247,10 @@ export class HttpClient {
       'Content-Type': 'application/json',
       ...options?.headers,
     };
+    this.schemas = options?.schemas;
+    this.serializer = options?.serializer ?? new JsonSerializer();
+    this.connectionPool = new ConnectionPool(options?.connectionPool);
+    this.onResponse = options?.onResponse;
     this.interceptors = new InterceptorManager();
     this.mode = normalizeMode(options?.mode);
     this.mockRouter = new MockRouter({
@@ -243,21 +264,6 @@ export class HttpClient {
     this.deduplicationWindow = options?.deduplicationWindow ?? 1000;
     this.errorHandler = options?.errorHandler;
     this.requestIdGenerator = options?.requestIdGenerator;
-
-    if (options?.enableRequestQueue) {
-      this.requestQueue = new RequestQueue({
-        maxConcurrentRequests: options.maxConcurrentRequests,
-      });
-    }
-
-    if (options?.enableOfflineQueue) {
-      this.offlineQueue = new OfflineQueue();
-    }
-
-    this.metricsCollector = new MetricsCollector({
-      enabled: options?.enableMetrics ?? false,
-      callback: options?.metricsCallback,
-    });
 
     if (this.deduplicationWindow < 0) {
       throw new Error('deduplicationWindow must be greater than or equal to zero');
@@ -296,12 +302,6 @@ export class HttpClient {
   private log(message: string, data?: unknown): void {
     if (!this.debug) return;
     this.logger(message, data);
-  }
-
-  private log(message: string, data?: unknown): void {
-    if (this.debug) {
-      this.logger(message, data);
-    }
   }
 
   /**
@@ -424,20 +424,6 @@ export class HttpClient {
     this.inFlightRequests.add(requestId);
 
     const executeInternal = async (): Promise<T> => {
-      const seeded: RequestOptions = {
-        ...options,
-        requestId,
-        headers: withRequestIdHeader(options.headers, requestId),
-      };
-      const finalOptions = await this.interceptors.executeRequestInterceptors(seeded);
-
-      const key = `${finalOptions.method}:${path}:${stableSerialize(finalOptions.body ?? null)}`;
-      if (this.deduplicateRequests) {
-        const cached = this.deduplicationCache.get(key);
-        if (cached && cached.expiresAt > Date.now()) return cached.promise as Promise<T>;
-        if (cached) this.deduplicationCache.delete(key);
-      }
-
       try {
         // Throttle before making request
         if (this.throttleManager) {
@@ -464,6 +450,21 @@ export class HttpClient {
           headers: withRequestIdHeader(options.headers, requestId),
         };
         const finalOptions = await this.interceptors.executeRequestInterceptors(seeded);
+        const schemas = finalOptions.schemas ?? this.schemas;
+        if (
+          schemas?.request &&
+          (finalOptions.body !== undefined ||
+            finalOptions.method === 'POST' ||
+            finalOptions.method === 'PUT' ||
+            finalOptions.method === 'PATCH')
+        ) {
+          finalOptions.body = validateSchema(
+            schemas.request,
+            finalOptions.body,
+            'request',
+            requestId
+          ) as Record<string, unknown>;
+        }
 
         // Execute afterRequest hooks
         if (this.hookManager) {
@@ -478,47 +479,31 @@ export class HttpClient {
         }
 
         const result = await this.executeDeduplication<T>(key, async () => {
+          let response: T;
           if (this.mode === 'sandbox') {
             const mocked = await this.mockRouter.handle(finalOptions.method, path, finalOptions.body);
-            return (await this.interceptors.executeResponseInterceptors(mocked)) as T;
-          }
-          try {
-            return await this.sendWithRetries<T>(path, finalOptions);
-          } catch (error) {
-            if (!this.canRecoverFrom(error, path, finalOptions)) throw error;
+            response = (await this.interceptors.executeResponseInterceptors(mocked)) as T;
+          } else {
             try {
-              await this.refreshSessionOnce();
-            } catch {
-              throw error;
+              response = await this.sendWithRetries<T>(path, finalOptions);
+            } catch (error) {
+              if (!this.canRecoverFrom(error, path, finalOptions)) throw error;
+              try {
+                await this.refreshSessionOnce();
+              } catch {
+                throw error;
+              }
+              response = await this.sendWithRetries<T>(path, finalOptions);
             }
-            return await this.sendWithRetries<T>(path, finalOptions);
           }
+          return schemas?.response
+            ? validateSchema(schemas.response, response, 'response', requestId) as T
+            : response;
         });
         return result;
       } finally {
         this.inFlightRequests.delete(requestId);
       }
-    };
-
-    const executeWithQueue = (): Promise<T> => {
-      if (this.requestQueue) {
-        return this.requestQueue.enqueue(executeInternal);
-      }
-      return executeInternal();
-    };
-
-    const executeWithOffline = (): Promise<T> => {
-      if (this.offlineQueue) {
-        return this.offlineQueue.handleRequest(options.method, path, executeWithQueue);
-      }
-      return executeWithQueue();
-    };
-
-    try {
-      const result = await executeWithOffline();
-      success = true;
-      statusCode = 200;
-      return result;
     };
 
     const executeWithQueue = (): Promise<T> => {
