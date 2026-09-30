@@ -111,31 +111,15 @@ export function useCreateTip(): UseCreateTipState & UseCreateTipActions {
     setState(fn);
   }, []);
 
-  const withSubmissionGuard = useCallback(
-    <T>(action: string, task: () => Promise<T>): Promise<T> => {
-      if (inFlightRef.current) {
-        return Promise.reject(new Error(`${action} already in progress`));
-      }
-      inFlightRef.current = true;
-      return Promise.resolve()
-        .then(task)
-        .finally(() => {
-          inFlightRef.current = false;
-        });
-    },
-    []
+  const start = useCallback(
+    (step: UseCreateTipState['step']) => () =>
+      safeSetState((s) => ({ ...s, loading: true, step, error: undefined })),
+    [safeSetState]
   );
-
-  const start = (step: UseCreateTipState['step']) => () =>
-    safeSetState((s) => ({
-      ...s,
-      loading: true,
-      submitting: true,
-      step,
-      error: undefined,
-    }));
-  const fail = (error: string) =>
-    safeSetState((s) => ({ ...s, error, step: 'error', loading: false, submitting: false }));
+  const fail = useCallback(
+    (error: string) => safeSetState((s) => ({ ...s, error, step: 'error', loading: false })),
+    [safeSetState]
+  );
 
   const createTip = useCallback(
     (data: CreateTipRequest): Promise<Transaction> =>
@@ -163,7 +147,7 @@ export function useCreateTip(): UseCreateTipState & UseCreateTipActions {
             })
         )
       ),
-    [client, setError, setIsLoading, safeSetState, withSubmissionGuard]
+    [client, setError, setIsLoading, safeSetState, start, fail]
   );
 
   const buildTransaction = useCallback(
@@ -186,7 +170,7 @@ export function useCreateTip(): UseCreateTipState & UseCreateTipActions {
             })
         )
       ),
-    [client, setError, setIsLoading, safeSetState, withSubmissionGuard]
+    [client, setError, setIsLoading, safeSetState, start, fail]
   );
 
   const submitTransaction = useCallback(
@@ -215,7 +199,7 @@ export function useCreateTip(): UseCreateTipState & UseCreateTipActions {
             })
         )
       ),
-    [client, setError, setIsLoading, safeSetState, withSubmissionGuard]
+    [client, setError, setIsLoading, safeSetState, start, fail]
   );
 
   const confirmTransaction = useCallback(

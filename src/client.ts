@@ -7,8 +7,14 @@
  * performance metrics, offline/request queue management, and sandbox/mock mode.
  */
 
-import { HttpClient, RequestOptions, type HttpClientMode, type ProxyConfig } from './http/http-client';
+import {
+  HttpClient,
+  RequestOptions,
+  type HttpClientMode,
+  type ProxyConfig,
+} from './http/http-client';
 import { FailoverManager, type EndpointConfig } from './http/failover-manager';
+import { ResponseNormalizer } from './http/response-normalizer';
 import { getConfig } from './config';
 import { ApiResponse } from './types/api';
 import {
@@ -41,16 +47,11 @@ import * as authMethods from './client/auth';
 import { CreateWalletRequest, UpdateWalletRequest } from './types/models';
 import * as batchMethods from './client/batch-operations';
 import { GraphQLClient } from './graphql/graphql-client';
-import {
-  BatchProcessorOptions,
-  BatchResult,
-} from './http/batch-processor';
-import {
-  ErrorHandler,
-  Middleware,
-} from './types/errors';
+import { BatchProcessorOptions, BatchResult } from './http/batch-processor';
+import { ErrorHandler, Middleware } from './types/errors';
 import { TelemetryClient, type TelemetryConfig } from './telemetry';
 import { PluginSystem, type Plugin } from './lib/plugin-system';
+import { Analytics } from './lib/analytics';
 import { initializeTracing, getTracingProvider } from './lib/telemetry';
 import type { MetricsCallback, MetricsSummary } from './lib/metrics';
 import type { OfflineEventType, OfflineEventListener } from './http/offline-queue';
@@ -62,6 +63,16 @@ import {
 import type { ErrorReporter } from './lib/error-reporter';
 import { HookManager, type HookRegistration } from './lib/hooks';
 import { ThrottleManager } from './http/throttle-manager';
+import { OfflineManager } from './offline/sync';
+import type {
+  OfflineConfig,
+  OfflineSyncEventType,
+  OfflineSyncEventListener,
+  SyncState,
+  SyncResult,
+  SyncOptions,
+  StorageStats,
+} from './types/offline';
 
 export type ClientMode = 'sandbox' | 'live' | 'production';
 
@@ -109,8 +120,12 @@ export interface ClientConfig {
   throttleWindowMs?: number;
   /** Proxy configuration for corporate environments */
   proxy?: ProxyConfig;
+  /** Compress serialized request bodies above the configured threshold (default 1 KiB). */
+  compress?: RequestCompressionConfig;
   /** Telemetry configuration for usage analytics */
   telemetry?: TelemetryConfig;
+  /** Offline-first storage and sync configuration */
+  offline?: OfflineConfig;
 }
 
 function normalizeClientMode(mode?: ClientMode): 'live' | 'sandbox' {
@@ -149,6 +164,7 @@ export class DorisioClient {
   private hookManager: HookManager;
   private telemetryClient?: TelemetryClient;
   private pluginSystem: PluginSystem;
+  private offlineManager?: OfflineManager;
 
   constructor(config: ClientConfig) {
     const mode = normalizeClientMode(config.mode);
@@ -177,6 +193,7 @@ export class DorisioClient {
       throttleMaxRequests: config.throttleMaxRequests,
       throttleWindowMs: config.throttleWindowMs,
       proxy: config.proxy,
+      compress: config.compress,
     };
 
     this.token = config.token;
@@ -258,6 +275,38 @@ export class DorisioClient {
 
     // Initialize plugin system
     this.pluginSystem = new PluginSystem();
+
+    // Initialize offline manager if configured
+    if (config.offline && config.offline.enabled) {
+      const offlineManager = new OfflineManager({
+        config: config.offline,
+        requestExecutor: async (method, path, data, headers) => {
+          return this.request(method as 'POST' | 'PUT' | 'PATCH' | 'DELETE', path, data, {
+            headers,
+          });
+        },
+        onlineStatusChecker: () => this.isOnline(),
+      });
+      this.offlineManager = offlineManager;
+
+      // Initialize async - errors are emitted via events
+      void offlineManager.initialize().catch((error) => {
+        if (this.offlineManager === offlineManager) {
+          this.offlineManager = undefined;
+        }
+        if (this.config.logger) {
+          this.config.logger('[DorisioClient] Failed to initialize offline manager', error);
+        }
+      });
+    }
+
+    this.graphql = new GraphQLClient({
+      baseUrl: this.config.baseUrl,
+      endpoint: '/graphql',
+      token: this.token,
+      mode: this.mode,
+      sandboxSeed: config.sandboxSeed,
+    });
   }
 
   /**
@@ -352,6 +401,18 @@ export class DorisioClient {
     body?: unknown,
     options?: Partial<RequestOptions>
   ): Promise<ApiResponse<T>> {
+    if (this.offlineManager && !this.offlineManager.isOnline() && method !== 'GET') {
+      return this.offlineManager.queueOperationAndWait({
+        type: 'custom',
+        method,
+        path,
+        data: body as Record<string, unknown> | undefined,
+        headers: options?.headers,
+        idempotencyKey: options?.headers?.['Idempotency-Key'],
+        metadata: { clientTimestamp: Date.now() },
+      }) as Promise<ApiResponse<T>>;
+    }
+
     this.apiVersionHandler.checkEndpointDeprecation(path);
 
     const initialHeaders = options?.headers ? { ...options.headers } : {};
@@ -365,7 +426,8 @@ export class DorisioClient {
     const requestBody = migrated.body;
     const requestHeaders = migrated.headers;
     const requestPath = migrated.path;
-    const requestMethod = (migrated.method || method) as 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+    const requestMethod = (migrated.method || method) as
+      'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 
     const mergedOptions: Partial<RequestOptions> = {
       ...options,
@@ -412,7 +474,7 @@ export class DorisioClient {
       return result as ApiResponse<T>;
     };
 
-    const res = await executeMiddleware(0);
+    const res = ResponseNormalizer.normalize<T>(await executeMiddleware(0));
     return this.apiVersionHandler.migrateResponse(
       res,
       this.apiVersionHandler.getCurrentVersion(),
@@ -658,23 +720,56 @@ export class DorisioClient {
   }
 
   /**
-   * Get currently active API version
+   * Subscribe to offline queue lifecycle events (legacy offline queue)
    */
-  on(event: OfflineEventType, listener: OfflineEventListener): void {
+  on(event: OfflineEventType, listener: OfflineEventListener): void;
+  /**
+   * Subscribe to offline sync events (new offline-first storage)
+   */
+  on(event: OfflineSyncEventType, listener: OfflineSyncEventListener<any>): void;
+  on(event: OfflineEventType | OfflineSyncEventType, listener: any): void {
+    // Try new offline manager first
+    if (this.offlineManager && this.isOfflineSyncEvent(event)) {
+      this.offlineManager.on(event as OfflineSyncEventType, listener);
+      return;
+    }
+
+    // Fallback to legacy offline queue
     const queue = this.httpClient.getOfflineQueue();
     if (queue) {
-      queue.on(event, listener);
+      queue.on(event as OfflineEventType, listener);
     }
   }
 
   /**
-   * Unsubscribe from offline queue lifecycle events
+   * Unsubscribe from offline queue lifecycle events (legacy offline queue)
    */
-  off(event: OfflineEventType, listener: OfflineEventListener): void {
+  off(event: OfflineEventType, listener: OfflineEventListener): void;
+  /**
+   * Unsubscribe from offline sync events (new offline-first storage)
+   */
+  off(event: OfflineSyncEventType, listener: OfflineSyncEventListener<any>): void;
+  off(event: OfflineEventType | OfflineSyncEventType, listener: any): void {
+    // Try new offline manager first
+    if (this.offlineManager && this.isOfflineSyncEvent(event)) {
+      this.offlineManager.off(event as OfflineSyncEventType, listener);
+      return;
+    }
+
+    // Fallback to legacy offline queue
     const queue = this.httpClient.getOfflineQueue();
     if (queue) {
-      queue.off(event, listener);
+      queue.off(event as OfflineEventType, listener);
     }
+  }
+
+  /**
+   * Check if an event is an offline sync event (vs legacy offline queue event)
+   */
+  private isOfflineSyncEvent(event: string): boolean {
+    return (
+      event.startsWith('sync:') || event.startsWith('storage:') || event.startsWith('operation:')
+    );
   }
 
   /**
@@ -703,6 +798,7 @@ export class DorisioClient {
    */
   setOnline(online: boolean): void {
     this.httpClient.setOnline(online);
+    this.offlineManager?.setOnline(online);
   }
 
   /**
@@ -712,13 +808,66 @@ export class DorisioClient {
     return this.httpClient.getOfflineQueueSize();
   }
 
+  /**
+   * Get offline sync state (new offline-first storage)
+   */
+  async getOfflineSyncState(): Promise<SyncState | null> {
+    if (!this.offlineManager) {
+      return null;
+    }
+    return this.offlineManager.getSyncState();
+  }
+
+  /**
+   * Manually trigger offline sync (new offline-first storage)
+   */
+  async syncOfflineOperations(options?: SyncOptions): Promise<SyncResult | null> {
+    if (!this.offlineManager) {
+      return null;
+    }
+    return this.offlineManager.sync(options);
+  }
+
+  /**
+   * Get offline storage statistics (new offline-first storage)
+   */
+  async getOfflineStats(): Promise<StorageStats | null> {
+    if (!this.offlineManager) {
+      return null;
+    }
+    return this.offlineManager.getStats();
+  }
+
+  /**
+   * Retry all failed offline operations (new offline-first storage)
+   */
+  async retryFailedOfflineOperations(): Promise<SyncResult | null> {
+    if (!this.offlineManager) {
+      return null;
+    }
+    return this.offlineManager.retryFailed();
+  }
+
+  /**
+   * Clear all offline operations (use with caution)
+   */
+  async clearOfflineStorage(): Promise<void> {
+    if (this.offlineManager) {
+      await this.offlineManager.clearAll();
+    }
+  }
+
+  /**
+   * Check if offline-first mode is enabled
+   */
+  isOfflineModeEnabled(): boolean {
+    return this.offlineManager !== undefined;
+  }
+
   // ---------------------------------------------------------------------------
   // Creator methods
   // ---------------------------------------------------------------------------
-  declare getCreator: (
-    creatorId: string,
-    options?: Partial<RequestOptions>
-  ) => Promise<Creator>;
+  declare getCreator: (creatorId: string, options?: Partial<RequestOptions>) => Promise<Creator>;
   declare listCreators: (
     queryOptions?: {
       page?: number;
@@ -744,18 +893,9 @@ export class DorisioClient {
     data: CreateWalletRequest,
     options?: Partial<RequestOptions>
   ) => Promise<Wallet>;
-  declare disconnectWallet: (
-    walletId: string,
-    options?: Partial<RequestOptions>
-  ) => Promise<void>;
-  declare getWallets: (
-    userId: string,
-    options?: Partial<RequestOptions>
-  ) => Promise<Wallet[]>;
-  declare getWallet: (
-    walletId: string,
-    options?: Partial<RequestOptions>
-  ) => Promise<Wallet>;
+  declare disconnectWallet: (walletId: string, options?: Partial<RequestOptions>) => Promise<void>;
+  declare getWallets: (userId: string, options?: Partial<RequestOptions>) => Promise<Wallet[]>;
+  declare getWallet: (walletId: string, options?: Partial<RequestOptions>) => Promise<Wallet>;
   declare updateWallet: (
     walletId: string,
     data: UpdateWalletRequest,
@@ -864,13 +1004,8 @@ export class DorisioClient {
     nextPayoutDate?: string;
     minimumThreshold: number;
   }>;
-  declare canPayout: (
-    creatorId: string,
-    options?: Partial<RequestOptions>
-  ) => Promise<boolean>;
-  declare getAccountSummary: (
-    options?: Partial<RequestOptions>
-  ) => Promise<{
+  declare canPayout: (creatorId: string, options?: Partial<RequestOptions>) => Promise<boolean>;
+  declare getAccountSummary: (options?: Partial<RequestOptions>) => Promise<{
     userId: string;
     email: string;
     role: string;
@@ -908,27 +1043,13 @@ export class DorisioClient {
   // ---------------------------------------------------------------------------
   // Auth methods
   // ---------------------------------------------------------------------------
-  declare refreshSession: (
-    options?: Partial<RequestOptions>
-  ) => Promise<SessionInfo>;
-  declare validateSession: (
-    options?: Partial<RequestOptions>
-  ) => Promise<User>;
-  declare getCurrentUser: (
-    options?: Partial<RequestOptions>
-  ) => Promise<User>;
-  declare logout: (
-    options?: Partial<RequestOptions>
-  ) => Promise<void>;
-  declare isAuthenticated: (
-    options?: Partial<RequestOptions>
-  ) => Promise<boolean>;
-  declare extendSession: (
-    options?: Partial<RequestOptions>
-  ) => Promise<SessionInfo>;
-  declare getSessionExpiry: (
-    options?: Partial<RequestOptions>
-  ) => Promise<{
+  declare refreshSession: (options?: Partial<RequestOptions>) => Promise<SessionInfo>;
+  declare validateSession: (options?: Partial<RequestOptions>) => Promise<User>;
+  declare getCurrentUser: (options?: Partial<RequestOptions>) => Promise<User>;
+  declare logout: (options?: Partial<RequestOptions>) => Promise<void>;
+  declare isAuthenticated: (options?: Partial<RequestOptions>) => Promise<boolean>;
+  declare extendSession: (options?: Partial<RequestOptions>) => Promise<SessionInfo>;
+  declare getSessionExpiry: (options?: Partial<RequestOptions>) => Promise<{
     expiresAt: string;
     expiresIn: number;
     isExpired: boolean;

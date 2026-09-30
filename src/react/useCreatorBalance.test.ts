@@ -260,6 +260,59 @@ describe('useCreatorBalance Hook', () => {
         );
       });
     });
+
+    it('auto-fetches again when the creator id changes', async () => {
+      mockRequest.mockResolvedValue({
+        success: true,
+        data: { totalEarnings: 100, pendingBalance: 10 },
+      });
+
+      const { rerender } = renderHook(
+        ({ creatorId }: { creatorId: string }) => useCreatorBalance(creatorId, true),
+        { initialProps: { creatorId: 'creator-1' }, wrapper: wrapperFor() }
+      );
+
+      await waitFor(() => expect(mockRequest).toHaveBeenCalledTimes(1));
+      rerender({ creatorId: 'creator-2' });
+      await waitFor(() => expect(mockRequest).toHaveBeenCalledTimes(2));
+
+      expect(mockRequest.mock.calls.map((call) => call[1])).toEqual([
+        '/api/v1/creators/creator-1/earnings',
+        '/api/v1/creators/creator-2/earnings',
+      ]);
+    });
+
+    it('ignores an older creator response that resolves after the latest one', async () => {
+      const resolveRequests: Array<(value: unknown) => void> = [];
+      mockRequest.mockImplementation(
+        () => new Promise((resolve) => resolveRequests.push(resolve))
+      );
+
+      const { result, rerender } = renderHook(
+        ({ creatorId }: { creatorId: string }) => useCreatorBalance(creatorId, true),
+        { initialProps: { creatorId: 'creator-1' }, wrapper: wrapperFor() }
+      );
+      rerender({ creatorId: 'creator-2' });
+
+      await act(async () => {
+        resolveRequests[1]?.({
+          success: true,
+          data: { totalEarnings: 200, pendingBalance: 20 },
+        });
+        await Promise.resolve();
+      });
+      await waitFor(() => expect(result.current.balance?.totalEarnings).toBe(200));
+
+      await act(async () => {
+        resolveRequests[0]?.({
+          success: true,
+          data: { totalEarnings: 100, pendingBalance: 10 },
+        });
+        await Promise.resolve();
+      });
+
+      expect(result.current.balance?.totalEarnings).toBe(200);
+    });
   });
 
   describe('refetch and reset', () => {
