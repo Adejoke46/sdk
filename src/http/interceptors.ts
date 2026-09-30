@@ -4,38 +4,64 @@
  * Allows hooks into request and response lifecycle.
  */
 
-import { RequestOptions } from './http-client';
+import type { RequestOptions } from './http-client';
+import type {
+  ErrorInterceptor,
+  InterceptorId,
+  RequestInterceptor,
+  ResponseInterceptor,
+} from '../types/interceptors';
 
-export type RequestInterceptor = (
-  options: RequestOptions
-) => RequestOptions | Promise<RequestOptions>;
-export type ResponseInterceptor = <T>(response: T) => T | Promise<T>;
-export type ErrorInterceptor = (error: unknown) => unknown | Promise<unknown>;
+export type {
+  ErrorInterceptor,
+  InterceptorId,
+  RequestInterceptor,
+  ResponseInterceptor,
+} from '../types/interceptors';
 
 export class InterceptorManager {
-  private requestInterceptors: RequestInterceptor[] = [];
-  private responseInterceptors: ResponseInterceptor[] = [];
-  private errorInterceptors: ErrorInterceptor[] = [];
+  private requestInterceptors = new Map<InterceptorId, RequestInterceptor>();
+  private responseInterceptors = new Map<InterceptorId, ResponseInterceptor>();
+  private errorInterceptors = new Map<InterceptorId, ErrorInterceptor>();
+  private nextInterceptorId = 0;
 
   /**
    * Add request interceptor
    */
-  addRequestInterceptor(interceptor: RequestInterceptor): void {
-    this.requestInterceptors.push(interceptor);
+  addRequestInterceptor(interceptor: RequestInterceptor): InterceptorId {
+    const id = ++this.nextInterceptorId;
+    this.requestInterceptors.set(id, interceptor);
+    return id;
+  }
+
+  removeRequestInterceptor(id: InterceptorId): boolean {
+    return this.requestInterceptors.delete(id);
   }
 
   /**
    * Add response interceptor
    */
-  addResponseInterceptor(interceptor: ResponseInterceptor): void {
-    this.responseInterceptors.push(interceptor);
+  addResponseInterceptor(interceptor: ResponseInterceptor): InterceptorId {
+    const id = ++this.nextInterceptorId;
+    this.responseInterceptors.set(id, interceptor);
+    return id;
+  }
+
+  removeResponseInterceptor(id: InterceptorId): boolean {
+    return this.responseInterceptors.delete(id);
   }
 
   /**
    * Add error interceptor
    */
-  addErrorInterceptor(interceptor: ErrorInterceptor): void {
-    this.errorInterceptors.push(interceptor);
+  addErrorInterceptor(interceptor: ErrorInterceptor): InterceptorId {
+    const id = ++this.nextInterceptorId;
+    this.errorInterceptors.set(id, interceptor);
+    return id;
+  }
+
+  removeErrorInterceptor(id: InterceptorId): boolean {
+    return this.errorInterceptors.delete(id);
   }
 
   /**
@@ -43,7 +69,7 @@ export class InterceptorManager {
    */
   async executeRequestInterceptors(options: RequestOptions): Promise<RequestOptions> {
     let result = options;
-    for (const interceptor of this.requestInterceptors) {
+    for (const interceptor of this.requestInterceptors.values()) {
       result = await interceptor(result);
     }
     return result;
@@ -54,7 +80,7 @@ export class InterceptorManager {
    */
   async executeResponseInterceptors<T>(response: T): Promise<T> {
     let result = response;
-    for (const interceptor of this.responseInterceptors) {
+    for (const interceptor of this.responseInterceptors.values()) {
       result = await interceptor(result);
     }
     return result;
@@ -65,8 +91,11 @@ export class InterceptorManager {
    */
   async executeErrorInterceptors(error: unknown): Promise<unknown> {
     let result = error;
-    for (const interceptor of this.errorInterceptors) {
-      result = await interceptor(result);
+    for (const interceptor of this.errorInterceptors.values()) {
+      const next = await interceptor(result);
+      if (next !== undefined) {
+        result = next;
+      }
     }
     return result;
   }
@@ -79,9 +108,9 @@ export class InterceptorManager {
    * retaining references to auth tokens, loggers, or other large objects.
    */
   cleanup(): void {
-    this.requestInterceptors = [];
-    this.responseInterceptors = [];
-    this.errorInterceptors = [];
+    this.requestInterceptors.clear();
+    this.responseInterceptors.clear();
+    this.errorInterceptors.clear();
   }
 
   /**
@@ -90,9 +119,9 @@ export class InterceptorManager {
    */
   getCount(): { request: number; response: number; error: number } {
     return {
-      request: this.requestInterceptors.length,
-      response: this.responseInterceptors.length,
-      error: this.errorInterceptors.length,
+      request: this.requestInterceptors.size,
+      response: this.responseInterceptors.size,
+      error: this.errorInterceptors.size,
     };
   }
 }

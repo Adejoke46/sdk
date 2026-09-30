@@ -9,14 +9,23 @@
 import { ApiError, DorisioError, ErrorHandler, ErrorHandlerContext } from '../types';
 import { InterceptorManager } from './interceptors';
 import { generateRequestId, isRequestIdempotent, RetryConflictError } from './retry-manager';
+import { CircuitBreaker, type CircuitBreakerConfig, CircuitOpenError } from './circuit-breaker';
 import { MockRouter, type SandboxHistoryEntry } from '../sandbox/mock-router';
 import { RequestQueue } from './request-queue';
 import { OfflineQueue } from './offline-queue';
+import { ConnectionPool } from './connection-pool';
+import { JsonSerializer } from './serializer';
 import { MetricsCollector, type MetricsSummary, type MetricsCallback } from '../lib/metrics';
 import { ThrottleManager } from './throttle-manager';
 import { HookManager, type HookContext, type ResponseContext } from '../lib/hooks';
-import { StreamHandler, type StreamOptions, type StreamResult, isLargeResponse } from './stream-handler';
+import {
+  StreamHandler,
+  type StreamOptions,
+  type StreamResult,
+  isLargeResponse,
+} from './stream-handler';
 import { getTracingProvider, SpanStatus } from '../lib/telemetry';
+import { prepareRequestBody, type RequestCompressionConfig } from './compress';
 
 export type HttpClientMode = 'live' | 'sandbox' | 'production';
 
@@ -37,6 +46,8 @@ export interface RequestOptions {
    * skips retries. Aborted requests reject instead of retrying.
    */
   signal?: AbortSignal;
+  /** Callback invoked after the response is received but before middleware processing. */
+  onResponse?: (response: Response) => void;
   /**
    * Stable id for this logical request. All retry attempts reuse it (sent to
    * the server as `X-Request-Id` when the caller did not already set one) and
@@ -48,6 +59,8 @@ export interface RequestOptions {
    * Optional name of the calling SDK method for logging / diagnostics.
    */
   methodName?: string;
+  /** Parameters used with methodName for cache lookup and invalidation. */
+  cacheParams?: readonly unknown[];
   /**
    * Enable streaming mode for large responses. Allows processing chunks
    * without loading entire response into memory.
@@ -77,6 +90,8 @@ export interface HttpClientOptions {
   /** Reuse an in-flight or recently completed identical request. */
   deduplicateRequests?: boolean;
   deduplicationWindow?: number;
+  /** Optional response cache configuration. */
+  cache?: CacheOptions;
   /** Custom error handler for error recovery strategies */
   errorHandler?: ErrorHandler;
   /** Custom request ID generator function */
@@ -111,6 +126,8 @@ export interface HttpClientOptions {
   hookManager?: HookManager;
   /** Proxy configuration */
   proxy?: ProxyConfig;
+  /** Circuit breaker configuration for failing endpoints */
+  circuitBreaker?: CircuitBreakerConfig;
 }
 
 export interface ProxyConfig {
@@ -166,10 +183,24 @@ function stableSerialize(value: unknown): string {
   if (value && typeof value === 'object') {
     return `{${Object.keys(value as Record<string, unknown>)
       .sort()
-      .map((key) => `${JSON.stringify(key)}:${stableSerialize((value as Record<string, unknown>)[key])}`)
+      .map(
+        (key) =>
+          `${JSON.stringify(key)}:${stableSerialize((value as Record<string, unknown>)[key])}`
+      )
       .join(',')}}`;
   }
   return JSON.stringify(value) ?? 'null';
+}
+
+function cloneCachedValue<T>(value: T): T {
+  if (typeof structuredClone !== 'function') {
+    return value;
+  }
+  try {
+    return structuredClone(value);
+  } catch {
+    return value;
+  }
 }
 
 function sanitize(value: unknown, key = ''): unknown {
@@ -212,15 +243,21 @@ export class HttpClient {
   private deduplicateRequests: boolean;
   private deduplicationWindow: number;
   private deduplicationCache = new Map<string, CachedRequest>();
+  private cacheManager: CacheManager;
   private errorHandler?: ErrorHandler;
   private requestIdGenerator?: () => string;
   private requestQueue?: RequestQueue;
   private offlineQueue?: OfflineQueue;
+  private connectionPool: ConnectionPool;
+  private serializer: JsonSerializer;
   private metricsCollector: MetricsCollector;
   private throttleManager?: ThrottleManager;
   private hookManager?: HookManager;
   private proxy?: ProxyConfig;
+  private onResponse?: (response: Response) => void;
+  private compression?: RequestCompressionConfig;
   private streamHandler: StreamHandler;
+  private circuitBreaker?: CircuitBreaker;
 
   constructor(baseUrl: string, options?: HttpClientOptions) {
     this.baseUrl = baseUrl.replace(/\/$/, '');
@@ -241,6 +278,7 @@ export class HttpClient {
     this.logger = options?.logger ?? ((message, data) => console.debug(message, data));
     this.deduplicateRequests = options?.deduplicateRequests ?? false;
     this.deduplicationWindow = options?.deduplicationWindow ?? 1000;
+    this.cacheManager = new CacheManager(options?.cache);
     this.errorHandler = options?.errorHandler;
     this.requestIdGenerator = options?.requestIdGenerator;
 
@@ -263,21 +301,6 @@ export class HttpClient {
       throw new Error('deduplicationWindow must be greater than or equal to zero');
     }
 
-    if (options?.enableRequestQueue) {
-      this.requestQueue = new RequestQueue({
-        maxConcurrentRequests: options.maxConcurrentRequests,
-      });
-    }
-
-    if (options?.enableOfflineQueue) {
-      this.offlineQueue = new OfflineQueue();
-    }
-
-    this.metricsCollector = new MetricsCollector({
-      enabled: options?.enableMetrics ?? false,
-      callback: options?.metricsCallback,
-    });
-
     if (options?.enableThrottling) {
       this.throttleManager = new ThrottleManager({
         maxRequests: options.throttleMaxRequests,
@@ -285,17 +308,26 @@ export class HttpClient {
       });
     }
 
+    this.connectionPool = new ConnectionPool();
+    this.serializer = new JsonSerializer();
     this.hookManager = options?.hookManager;
     this.proxy = options?.proxy;
+    this.onResponse = options?.onResponse;
+    this.compression = options?.compress;
     this.streamHandler = new StreamHandler();
+
+    if (options?.circuitBreaker) {
+      this.circuitBreaker = new CircuitBreaker(options.circuitBreaker);
+    }
   }
 
   /**
    * Emit sanitized request/response diagnostics through the configured logger.
    */
   private log(message: string, data?: unknown): void {
-    if (!this.debug) return;
-    this.logger(message, data);
+    if (this.debug) {
+      this.logger(message, data);
+    }
   }
 
   /**
@@ -334,6 +366,9 @@ export class HttpClient {
    */
   setHeader(key: string, value: string): void {
     this.defaultHeaders[key] = value;
+    if (key.toLowerCase() === 'authorization') {
+      this.cacheManager.clear();
+    }
   }
 
   /**
@@ -342,6 +377,13 @@ export class HttpClient {
   removeHeader(key: string): void {
     // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
     delete this.defaultHeaders[key];
+    if (key.toLowerCase() === 'authorization') {
+      this.cacheManager.clear();
+    }
+  }
+
+  getCacheManager(): CacheManager {
+    return this.cacheManager;
   }
 
   /**
@@ -373,11 +415,7 @@ export class HttpClient {
     return this.connectionPool.stats();
   }
 
-  configureSandbox(options: {
-    seed?: number;
-    latency?: number;
-    errorRate?: number;
-  }): void {
+  configureSandbox(options: { seed?: number; latency?: number; errorRate?: number }): void {
     if (options.seed !== undefined) this.mockRouter.setSeed(options.seed);
     if (options.latency !== undefined) this.mockRouter.setLatency(options.latency);
     if (options.errorRate !== undefined) this.mockRouter.setErrorRate(options.errorRate);
@@ -399,10 +437,11 @@ export class HttpClient {
    */
   async request<T>(path: string, options: RequestOptions): Promise<T> {
     const startTime = Date.now();
-    const methodName = options.method;
+    const methodName = options.methodName ?? options.method;
     let success = false;
     let statusCode: number | undefined;
     let rateLimited = false;
+    let cacheStatus: 'hit' | 'miss' | undefined;
 
     const requestId =
       options.requestId ??
@@ -418,20 +457,6 @@ export class HttpClient {
     this.inFlightRequests.add(requestId);
 
     const executeInternal = async (): Promise<T> => {
-      const seeded: RequestOptions = {
-        ...options,
-        requestId,
-        headers: withRequestIdHeader(options.headers, requestId),
-      };
-      const finalOptions = await this.interceptors.executeRequestInterceptors(seeded);
-
-      const key = `${finalOptions.method}:${path}:${stableSerialize(finalOptions.body ?? null)}`;
-      if (this.deduplicateRequests) {
-        const cached = this.deduplicationCache.get(key);
-        if (cached && cached.expiresAt > Date.now()) return cached.promise as Promise<T>;
-        if (cached) this.deduplicationCache.delete(key);
-      }
-
       try {
         // Throttle before making request
         if (this.throttleManager) {
@@ -449,7 +474,11 @@ export class HttpClient {
         };
         if (this.hookManager) {
           hookCtx = await this.hookManager.executeBeforeRequest(hookCtx);
-          options = { ...options, body: hookCtx.body as Record<string, unknown>, headers: hookCtx.headers };
+          options = {
+            ...options,
+            body: hookCtx.body as Record<string, unknown>,
+            headers: hookCtx.headers,
+          };
         }
 
         const seeded: RequestOptions = {
@@ -464,30 +493,70 @@ export class HttpClient {
           await this.hookManager.executeAfterRequest(hookCtx);
         }
 
-        const key = `${finalOptions.method}:${path}:${stableSerialize(finalOptions.body ?? null)}`;
-        if (this.deduplicateRequests) {
-          const cached = this.deduplicationCache.get(key);
-          if (cached && cached.expiresAt > Date.now()) return cached.promise as Promise<T>;
-          if (cached) this.deduplicationCache.delete(key);
+        const cacheMethod = finalOptions.methodName ?? finalOptions.method;
+        const cacheBaseParams = finalOptions.cacheParams ?? [path, finalOptions.body ?? null];
+        const cacheHeaders = Object.fromEntries(
+          Object.entries({ ...this.defaultHeaders, ...finalOptions.headers })
+            .filter(([header]) => header.toLowerCase() !== 'x-request-id')
+            .sort(([left], [right]) => left.localeCompare(right))
+        );
+        const cacheParams = [...cacheBaseParams, cacheHeaders];
+        const key = `${finalOptions.method}:${path}:${stableSerialize(finalOptions.body ?? null)}:${stableSerialize(cacheHeaders)}`;
+        const isCacheable = finalOptions.method === 'GET' && this.cacheManager.isEnabled();
+
+        if (isCacheable) {
+          const cached = this.cacheManager.get<T>(cacheMethod, cacheParams);
+          if (cached !== undefined) {
+            cacheStatus = 'hit';
+            return (await this.interceptors.executeResponseInterceptors(
+              cloneCachedValue(cached)
+            )) as T;
+          }
+          cacheStatus = 'miss';
         }
 
         const result = await this.executeDeduplication<T>(key, async () => {
+          let response: T;
           if (this.mode === 'sandbox') {
-            const mocked = await this.mockRouter.handle(finalOptions.method, path, finalOptions.body);
+            const mocked = await this.mockRouter.handle(
+              finalOptions.method,
+              path,
+              finalOptions.body
+            );
             return (await this.interceptors.executeResponseInterceptors(mocked)) as T;
           }
           try {
             return await this.sendWithRetries<T>(path, finalOptions);
           } catch (error) {
+            if (this.circuitBreaker && !(error instanceof CircuitOpenError)) {
+              if (error instanceof ApiError && error.statusCode !== undefined && error.statusCode < 500) {
+                this.circuitBreaker.recordSuccess(path);
+              } else {
+                this.circuitBreaker.recordFailure(path);
+              }
+            }
             if (!this.canRecoverFrom(error, path, finalOptions)) throw error;
             try {
-              await this.refreshSessionOnce();
-            } catch {
-              throw error;
+              response = await this.sendWithRetries<T>(path, finalOptions);
+            } catch (error) {
+              if (!this.canRecoverFrom(error, path, finalOptions)) throw error;
+              try {
+                await this.refreshSessionOnce();
+              } catch {
+                throw error;
+              }
+              response = await this.sendWithRetries<T>(path, finalOptions);
             }
-            return await this.sendWithRetries<T>(path, finalOptions);
           }
+
+          if (isCacheable) {
+            this.cacheManager.set(cacheMethod, cacheParams, cloneCachedValue(response));
+          }
+          return response;
         });
+        if (this.circuitBreaker) {
+          this.circuitBreaker.recordSuccess(path);
+        }
         return result;
       } finally {
         this.inFlightRequests.delete(requestId);
@@ -532,6 +601,7 @@ export class HttpClient {
           success,
           statusCode,
           rateLimited,
+          cacheStatus,
         });
       }
     }
@@ -559,11 +629,7 @@ export class HttpClient {
   /**
    * Whether a failed request is worth a token refresh + replay.
    */
-  private canRecoverFrom(
-    error: unknown,
-    path: string,
-    options: RequestOptions
-  ): boolean {
+  private canRecoverFrom(error: unknown, path: string, options: RequestOptions): boolean {
     if (!this.tokenRefresher) {
       return false;
     }
@@ -603,13 +669,20 @@ export class HttpClient {
    */
   private async sendWithRetries<T>(path: string, options: RequestOptions): Promise<T> {
     const url = `${this.baseUrl}${path}`;
-    const headers = { ...this.defaultHeaders, ...options.headers };
+    let headers = { ...this.defaultHeaders, ...options.headers };
+    const serializedBody = options.body ? this.serializer.serialize(options.body) : undefined;
+    let requestBody: BodyInit | undefined;
+    if (serializedBody !== undefined) {
+      const preparedBody = await prepareRequestBody(serializedBody, headers, this.compression);
+      headers = preparedBody.headers;
+      requestBody = preparedBody.body;
+    }
 
     // Apply proxy configuration if set
     const fetchOptions: RequestInit = {
       method: options.method,
       headers,
-      body: options.body ? this.serializer.serialize(options.body) : undefined,
+      body: requestBody,
       signal: options.signal
         ? AbortSignal.any([options.signal, AbortSignal.timeout(options.timeout ?? this.timeout)])
         : AbortSignal.timeout(options.timeout ?? this.timeout),
@@ -619,7 +692,9 @@ export class HttpClient {
     if (this.proxy?.url && typeof globalThis.process !== 'undefined') {
       try {
         // Dynamic import to avoid bundling undici in browser builds
-        const undici = await (Function('return import("undici")')() as Promise<typeof import('undici')>);
+        const undici = await (Function('return import("undici")')() as Promise<
+          typeof import('undici')
+        >);
         (fetchOptions as Record<string, unknown>).dispatcher = new undici.ProxyAgent({
           uri: this.proxy.url,
           requestTls: { rejectUnauthorized: this.proxy.rejectUnauthorized ?? true },
@@ -630,6 +705,8 @@ export class HttpClient {
     }
 
     let lastError: Error | null = null;
+    let interceptedError: unknown;
+    let hasInterceptedError = false;
     const attempts = options.retries ?? this.retryAttempts;
     const canRetry = isRequestIdempotent({
       method: options.method,
@@ -640,7 +717,7 @@ export class HttpClient {
     for (let attempt = 0; attempt < attempts; attempt++) {
       let release: (() => void) | undefined;
       try {
-        release = await this.connectionPool.acquire(options.signal);
+        release = await this.connectionPool.acquire();
         const startedAt = Date.now();
         this.logger('[DORISIO] request', {
           method: options.method,
@@ -666,11 +743,15 @@ export class HttpClient {
           let error: Record<string, unknown> = {};
           try {
             const errorText = await response.text();
-            error = errorText ? this.serializer.deserialize<Record<string, unknown>>(errorText) : {};
+            error = errorText
+              ? this.serializer.deserialize<Record<string, unknown>>(errorText)
+              : {};
           } catch {
             // Fallback for mocks that only implement json()
             try {
-              error = await (response as { json?: () => Promise<Record<string, unknown>> }).json?.() ?? {};
+              error =
+                (await (response as { json?: () => Promise<Record<string, unknown>> }).json?.()) ??
+                {};
             } catch {
               // ignore
             }
@@ -703,16 +784,17 @@ export class HttpClient {
           data = this.serializer.deserialize<T>(text);
         } catch {
           // Fallback for mocks that only implement json()
-          data = await (response as { json?: () => Promise<T> }).json?.() ?? (undefined as T);
+          data = (await (response as { json?: () => Promise<T> }).json?.()) ?? (undefined as T);
         }
 
-        return await this.interceptors.executeResponseInterceptors(data);
+        return data;
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));
         if (lastError instanceof DorisioError && !lastError.requestId && options.requestId) {
           lastError.requestId = options.requestId;
         }
-        await this.interceptors.executeErrorInterceptors(lastError);
+        interceptedError = await this.interceptors.executeErrorInterceptors(lastError);
+        hasInterceptedError = true;
 
         // Don't retry requests the caller cancelled (superseded hook
         // requests) — retrying an aborted fetch just burns attempts.
@@ -721,7 +803,7 @@ export class HttpClient {
           lastError.name === 'AbortError' ||
           (lastError as { code?: number }).code === 20
         ) {
-          throw lastError;
+          throw interceptedError;
         }
 
         // Call custom error handler if registered
@@ -760,12 +842,12 @@ export class HttpClient {
           error.statusCode >= 400 &&
           error.statusCode < 500
         ) {
-          throw error;
+          throw interceptedError;
         }
 
         // Never retry non-idempotent calls (avoids duplicate tips/charges)
         if (!canRetry) {
-          throw lastError;
+          throw interceptedError;
         }
 
         if (attempt < attempts - 1) {
@@ -776,7 +858,9 @@ export class HttpClient {
       }
     }
 
-    throw lastError || new Error('Request failed after retries');
+    throw hasInterceptedError
+      ? interceptedError
+      : lastError ?? new Error('Request failed after retries');
   }
 
   /**
@@ -875,7 +959,10 @@ export class HttpClient {
    * @param options - Request options with streaming configuration
    * @returns Promise resolving to stream result
    */
-  async requestStreaming(path: string, options: RequestOptions & { streamOptions: StreamOptions }): Promise<StreamResult> {
+  async requestStreaming(
+    path: string,
+    options: RequestOptions & { streamOptions: StreamOptions }
+  ): Promise<StreamResult> {
     if (!options.streamOptions) {
       throw new Error('streamOptions is required for streaming requests');
     }
@@ -904,7 +991,7 @@ export class HttpClient {
         throw new ApiError(
           `HTTP ${response.status}: ${response.statusText}`,
           response.status,
-          await response.text(),
+          await response.text()
         );
       }
 
