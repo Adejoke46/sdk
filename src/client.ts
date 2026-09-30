@@ -62,6 +62,8 @@ import {
 import type { ErrorReporter } from './lib/error-reporter';
 import { HookManager, type HookRegistration } from './lib/hooks';
 import { ThrottleManager } from './http/throttle-manager';
+import { CacheManager } from './cache/cache-manager';
+import type { CacheOptions } from './types/cache';
 
 export type ClientMode = 'sandbox' | 'live' | 'production';
 
@@ -85,6 +87,8 @@ export interface ClientConfig {
   logger?: (message: string, data?: unknown) => void;
   deduplicateRequests?: boolean;
   deduplicationWindow?: number;
+  /** Optional response cache configuration. */
+  cache?: CacheOptions;
   /** Custom error handler for error recovery strategies */
   errorHandler?: ErrorHandler;
   /** Custom request ID generator for request fingerprinting */
@@ -138,6 +142,7 @@ function normalizeClientMode(mode?: ClientMode): 'live' | 'sandbox' {
  */
 export class DorisioClient {
   public readonly graphql: GraphQLClient;
+  public readonly cache: CacheManager;
   private config: ClientConfig & { timeout: number; mode: 'live' | 'sandbox' };
   private httpClient: HttpClient;
   private token?: string;
@@ -165,6 +170,7 @@ export class DorisioClient {
       logger: config.logger,
       deduplicateRequests: config.deduplicateRequests,
       deduplicationWindow: config.deduplicationWindow,
+      cache: config.cache,
       errorHandler: config.errorHandler,
       requestIdGenerator: config.requestIdGenerator,
       enableRequestQueue: config.enableRequestQueue,
@@ -213,6 +219,7 @@ export class DorisioClient {
       logger: config.logger,
       deduplicateRequests: config.deduplicateRequests,
       deduplicationWindow: config.deduplicationWindow,
+      cache: config.cache,
       errorHandler: this.errorHandler,
       requestIdGenerator: config.requestIdGenerator,
       enableRequestQueue: config.enableRequestQueue,
@@ -229,6 +236,7 @@ export class DorisioClient {
         this.apiVersionHandler.checkResponseHeaders(response.headers);
       },
     });
+    this.cache = this.httpClient.getCacheManager();
 
     if (this.token) {
       this.httpClient.setHeader('Authorization', `Bearer ${this.token}`);

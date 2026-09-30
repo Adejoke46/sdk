@@ -58,6 +58,8 @@ export type {
 } from './http/interceptors';
 export type { RequestOptions, HttpClientOptions, HttpClientMode } from './http/http-client';
 export { HttpClient } from './http/http-client';
+export { CacheManager } from './cache/cache-manager';
+export type { CacheOptions, CacheStats, CacheStrategy } from './types/cache';
 export { RequestQueue, type RequestQueueOptions } from './http/request-queue';
 export { RequestSigner, type RequestSignerOptions } from './http/request-signer';
 export { ConnectionPool, type ConnectionPoolOptions, type ConnectionPoolStats } from './http/connection-pool';

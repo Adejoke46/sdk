@@ -15,6 +15,8 @@ export interface MetricsSummary {
   errorRate: number;
   avgLatency: number;
   rateLimitCount: number;
+  cacheHits: number;
+  cacheMisses: number;
   methodStats: Record<string, MethodStat>;
 }
 
@@ -31,6 +33,8 @@ export interface MetricRecord {
   statusCode?: number;
   /** Whether a 429 rate limit was encountered */
   rateLimited?: boolean;
+  /** Whether an enabled response cache served or missed this request. */
+  cacheStatus?: 'hit' | 'miss';
 }
 
 export interface CallbackMetrics extends MetricsSummary {
@@ -54,6 +58,8 @@ export class MetricsCollector {
   private totalErrors: number = 0;
   private totalLatency: number = 0;
   private rateLimitCount: number = 0;
+  private cacheHits: number = 0;
+  private cacheMisses: number = 0;
   private methodData: Map<string, { count: number; totalLatency: number }> = new Map();
 
   constructor(options?: MetricsCollectorOptions) {
@@ -98,6 +104,11 @@ export class MetricsCollector {
 
     if (entry.rateLimited || entry.statusCode === 429) {
       this.rateLimitCount++;
+    }
+    if (entry.cacheStatus === 'hit') {
+      this.cacheHits++;
+    } else if (entry.cacheStatus === 'miss') {
+      this.cacheMisses++;
     }
 
     const currentMethod = this.methodData.get(entry.method) || { count: 0, totalLatency: 0 };
@@ -151,6 +162,8 @@ export class MetricsCollector {
       errorRate,
       avgLatency,
       rateLimitCount: this.rateLimitCount,
+      cacheHits: this.cacheHits,
+      cacheMisses: this.cacheMisses,
       methodStats,
     };
   }
@@ -163,6 +176,8 @@ export class MetricsCollector {
     this.totalErrors = 0;
     this.totalLatency = 0;
     this.rateLimitCount = 0;
+    this.cacheHits = 0;
+    this.cacheMisses = 0;
     this.methodData.clear();
   }
 }
