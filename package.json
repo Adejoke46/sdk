@@ -35,7 +35,7 @@
     "format": "prettier --write src",
     "test": "vitest run",
     "test:watch": "vitest",
-    "docs": "typedoc",
+    "docs": "typedoc", "docs:build": "npm run docs && echo docs:build", 
     "docs:watch": "typedoc --watch",
     "storybook": "storybook build -o docs/storybook-static"
   },
