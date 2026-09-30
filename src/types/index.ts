@@ -85,6 +85,25 @@ export type {
 } from '../lib/logger';
 export { Logger, createLogger } from '../lib/logger';
 
+// Offline-first storage and sync exports
+export type {
+  OfflineConfig,
+  StorageBackendType,
+  QueuedOperation,
+  OperationStatus,
+  OperationType,
+  SyncState,
+  SyncResult,
+  SyncConflict,
+  OfflineSyncEventType,
+  OfflineSyncEventListener,
+  SyncOptions,
+  StorageStats,
+  ConflictResolutionStrategy,
+  IStorageBackend,
+  OperationFilter,
+} from './offline';
+
 // Schema exports for consumer validation
 export {
   Schemas,

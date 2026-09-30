@@ -167,7 +167,7 @@ await client.getCurrentUser();
 
 ### API Reference
 
-- **[Published API Docs](https://dorisio.github.io/sdk/)** - Auto-generated from JSDoc and deployed to GitHub Pages on every push to `main`
+- **[Published API Docs](https://docs.dorisio.dev/)** - Auto-generated from JSDoc and deployed to GitHub Pages on every push to `main`
 - **[Local TypeDoc build](./docs/index.html)** - Regenerate with `npm run docs`
 - **[Examples](./examples/)** - Runnable code samples
   - [Vanilla JS](./examples/vanilla/) - Auth, wallet, payments
@@ -724,7 +724,7 @@ MIT - See [LICENSE](./LICENSE) for details
 
 ## Support
 
-- 📖 [Published API Documentation](https://dorisio.github.io/sdk/)
+- 📖 [Published API Documentation](https://docs.dorisio.dev/)
 - 📖 [Local API Documentation](./docs/index.html)
 - 💬 [GitHub Issues](https://github.com/Dorisio/sdk/issues)
 - 📧 Support: support@dorisio.com

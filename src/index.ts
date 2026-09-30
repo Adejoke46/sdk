@@ -9,6 +9,7 @@ export const SDK_VERSION = '0.1.0';
 
 // Re-export client and utilities
 export { DorisioClient, type ClientConfig } from './client';
+export type { CompressionAlgorithm, RequestCompressionConfig } from './http/compress';
 
 // Re-export GraphQL client and queries
 export {
@@ -19,7 +20,7 @@ export {
   type GraphQLRequestOptions,
   type GraphQLResponse,
   type GraphQLErrorItem,
-  type GraphQLErrorLocation,
+  type GraphQMErrorLocation,
   type GraphQLCacheOptions,
   type CacheEntry,
 } from './graphql/graphql-client';
@@ -60,6 +61,7 @@ export type {
 export type { RequestOptions, HttpClientOptions, HttpClientMode } from './http/http-client';
 export { HttpClient } from './http/http-client';
 export { RequestQueue, type RequestQueueOptions } from './http/request-queue';
+export { Batcher, type BatchExecuteOptions, type BatchOperationResult } from './utils/batch';
 export { RequestSigner, type RequestSignerOptions } from './http/request-signer';
 export { ConnectionPool, type ConnectionPoolOptions, type ConnectionPoolStats } from './http/connection-pool';
 export {
@@ -69,6 +71,35 @@ export {
   type OfflineEventListener,
   type QueueProcessedResult,
 } from './http/offline-queue';
+
+// Re-export offline-first storage and sync (Issue #129)
+export { OfflineManager } from './offline/sync';
+export {
+  MemoryStorage,
+  IndexedDBStorage,
+  SQLiteStorage,
+  createStorageBackend,
+} from './offline/storage';
+export type {
+  OfflineConfig,
+  StorageBackendType,
+  QueuedOperation,
+  OperationStatus,
+  OperationType,
+  SyncState,
+  SyncResult,
+  SyncConflict,
+  OfflineSyncEventType,
+  OfflineSyncEventListener,
+  SyncOptions,
+  StorageStats,
+  ConflictResolutionStrategy,
+  IStorageBackend,
+  OperationFilter,
+  OperationMetadata,
+  SyncEventData,
+  StorageBackendOptions,
+} from './types/offline';
 export {
   FailoverManager,
   type EndpointConfig,
@@ -130,6 +161,14 @@ export {
   type SentryEvent,
 } from './integrations/sentry';
 
+// Re-export circuit breaker
+export {
+  CircuitBreaker,
+  CircuitBreakerOpenError,
+  type CircuitBreakerOptions,
+  type CircuitState,
+  type CircuitBreakerStats,
+} from './http/circuit-breaker';
 
 // Re-export real-time sync (Issue #58)
 export {

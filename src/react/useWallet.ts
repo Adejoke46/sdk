@@ -105,22 +105,28 @@ export function useWallet(): UseWalletState & UseWalletActions {
   };
 
   // Functional update that also mirrors the result into stateRef, so helpers never read a stale snapshot.
-  const update = (fn: (s: UseWalletState) => UseWalletState): void => {
+  const update = useCallback((fn: (s: UseWalletState) => UseWalletState): void => {
     if (!isMountedRef.current) return;
     setState((s) => {
       const next = fn(s);
       stateRef.current = next;
       return next;
     });
-  };
-  const begin =
+  }, []);
+  const begin = useCallback(
     (extra: Partial<UseWalletState> = {}) =>
-    () =>
-      update((s) => ({ ...s, loading: true, error: undefined, ...extra }));
+      () => update((s) => ({ ...s, loading: true, error: undefined, ...extra })),
+    [update]
+  );
   // Steps of the challenge flow also surface the failure in `challengeStep`.
-  const failStep = (error: string) =>
-    update((s) => ({ ...s, error, challengeStep: 'error', loading: false }));
-  const fail = (error: string) => update((s) => ({ ...s, error, loading: false }));
+  const failStep = useCallback(
+    (error: string) => update((s) => ({ ...s, error, challengeStep: 'error', loading: false })),
+    [update]
+  );
+  const fail = useCallback(
+    (error: string) => update((s) => ({ ...s, error, loading: false })),
+    [update]
+  );
 
   const generateNonce = useCallback(
     (publicKey: string): Promise<{ nonce: string; expiresIn: number }> =>
@@ -159,7 +165,7 @@ export function useWallet(): UseWalletState & UseWalletActions {
             return { nonce: data.nonce, expiresIn: data.expiresIn || 300 };
           })
       ),
-    [client, setError, setIsLoading]
+    [client, setError, setIsLoading, begin, failStep, update]
   );
 
   const getChallenge = useCallback(
@@ -198,7 +204,7 @@ export function useWallet(): UseWalletState & UseWalletActions {
             return data.challenge || data;
           })
       ),
-    [client, setError, setIsLoading]
+    [client, setError, setIsLoading, begin, failStep, update]
   );
 
   const verifyWallet = useCallback(
@@ -243,7 +249,7 @@ export function useWallet(): UseWalletState & UseWalletActions {
             return wallet;
           })
       ),
-    [client, setError, setIsLoading]
+    [client, setError, setIsLoading, begin, failStep, update]
   );
 
   const listWallets = useCallback(
@@ -281,7 +287,7 @@ export function useWallet(): UseWalletState & UseWalletActions {
             return wallets;
           })
       ),
-    [client, setError, setIsLoading]
+    [client, setError, setIsLoading, begin, fail, update]
   );
 
   const selectWallet = useCallback((wallet: Wallet) => {
@@ -325,7 +331,7 @@ export function useWallet(): UseWalletState & UseWalletActions {
             }));
           })
       ),
-    [client, setError, setIsLoading]
+    [client, setError, setIsLoading, begin, fail, update]
   );
 
   const renameWallet = useCallback(
@@ -366,7 +372,7 @@ export function useWallet(): UseWalletState & UseWalletActions {
             return updatedWallet;
           })
       ),
-    [client, setError, setIsLoading]
+    [client, setError, setIsLoading, begin, fail, update]
   );
 
   const getBalance = useCallback(
@@ -396,7 +402,7 @@ export function useWallet(): UseWalletState & UseWalletActions {
             return response.data;
           })
       ),
-    [client, setError, setIsLoading]
+    [client, setError, setIsLoading, begin, fail, update]
   );
 
   const reset = useCallback(() => {
