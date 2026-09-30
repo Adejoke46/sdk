@@ -62,6 +62,12 @@ import {
 import type { ErrorReporter } from './lib/error-reporter';
 import { HookManager, type HookRegistration } from './lib/hooks';
 import { ThrottleManager } from './http/throttle-manager';
+import type {
+  ErrorInterceptor,
+  InterceptorId,
+  RequestInterceptor,
+  ResponseInterceptor,
+} from './types/interceptors';
 
 export type ClientMode = 'sandbox' | 'live' | 'production';
 
@@ -331,6 +337,30 @@ export class DorisioClient {
     this.config.token = token;
     this.httpClient.setHeader('Authorization', `Bearer ${token}`);
     this.graphql.setToken(token);
+  }
+
+  addRequestInterceptor(interceptor: RequestInterceptor): InterceptorId {
+    return this.httpClient.getInterceptors().addRequestInterceptor(interceptor);
+  }
+
+  removeRequestInterceptor(id: InterceptorId): boolean {
+    return this.httpClient.getInterceptors().removeRequestInterceptor(id);
+  }
+
+  addResponseInterceptor(interceptor: ResponseInterceptor): InterceptorId {
+    return this.httpClient.getInterceptors().addResponseInterceptor(interceptor);
+  }
+
+  removeResponseInterceptor(id: InterceptorId): boolean {
+    return this.httpClient.getInterceptors().removeResponseInterceptor(id);
+  }
+
+  addErrorInterceptor(interceptor: ErrorInterceptor): InterceptorId {
+    return this.httpClient.getInterceptors().addErrorInterceptor(interceptor);
+  }
+
+  removeErrorInterceptor(id: InterceptorId): boolean {
+    return this.httpClient.getInterceptors().removeErrorInterceptor(id);
   }
 
   /**

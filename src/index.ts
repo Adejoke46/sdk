@@ -52,10 +52,11 @@ export {
 } from './http/api-version-handler';
 export { InterceptorManager } from './http/interceptors';
 export type {
+  InterceptorId,
   RequestInterceptor,
   ResponseInterceptor,
   ErrorInterceptor,
-} from './http/interceptors';
+} from './types/interceptors';
 export type { RequestOptions, HttpClientOptions, HttpClientMode } from './http/http-client';
 export { HttpClient } from './http/http-client';
 export { RequestQueue, type RequestQueueOptions } from './http/request-queue';

@@ -424,20 +424,6 @@ export class HttpClient {
     this.inFlightRequests.add(requestId);
 
     const executeInternal = async (): Promise<T> => {
-      const seeded: RequestOptions = {
-        ...options,
-        requestId,
-        headers: withRequestIdHeader(options.headers, requestId),
-      };
-      const finalOptions = await this.interceptors.executeRequestInterceptors(seeded);
-
-      const key = `${finalOptions.method}:${path}:${stableSerialize(finalOptions.body ?? null)}`;
-      if (this.deduplicateRequests) {
-        const cached = this.deduplicationCache.get(key);
-        if (cached && cached.expiresAt > Date.now()) return cached.promise as Promise<T>;
-        if (cached) this.deduplicationCache.delete(key);
-      }
-
       try {
         // Throttle before making request
         if (this.throttleManager) {
@@ -498,27 +484,6 @@ export class HttpClient {
       } finally {
         this.inFlightRequests.delete(requestId);
       }
-    };
-
-    const executeWithQueue = (): Promise<T> => {
-      if (this.requestQueue) {
-        return this.requestQueue.enqueue(executeInternal);
-      }
-      return executeInternal();
-    };
-
-    const executeWithOffline = (): Promise<T> => {
-      if (this.offlineQueue) {
-        return this.offlineQueue.handleRequest(options.method, path, executeWithQueue);
-      }
-      return executeWithQueue();
-    };
-
-    try {
-      const result = await executeWithOffline();
-      success = true;
-      statusCode = 200;
-      return result;
     };
 
     const executeWithQueue = (): Promise<T> => {
@@ -657,6 +622,8 @@ export class HttpClient {
     }
 
     let lastError: Error | null = null;
+    let interceptedError: unknown;
+    let hasInterceptedError = false;
     const attempts = options.retries ?? this.retryAttempts;
     const canRetry = isRequestIdempotent({
       method: options.method,
@@ -739,7 +706,8 @@ export class HttpClient {
         if (lastError instanceof DorisioError && !lastError.requestId && options.requestId) {
           lastError.requestId = options.requestId;
         }
-        await this.interceptors.executeErrorInterceptors(lastError);
+        interceptedError = await this.interceptors.executeErrorInterceptors(lastError);
+        hasInterceptedError = true;
 
         // Don't retry requests the caller cancelled (superseded hook
         // requests) — retrying an aborted fetch just burns attempts.
@@ -748,7 +716,7 @@ export class HttpClient {
           lastError.name === 'AbortError' ||
           (lastError as { code?: number }).code === 20
         ) {
-          throw lastError;
+          throw interceptedError;
         }
 
         // Call custom error handler if registered
@@ -787,12 +755,12 @@ export class HttpClient {
           error.statusCode >= 400 &&
           error.statusCode < 500
         ) {
-          throw error;
+          throw interceptedError;
         }
 
         // Never retry non-idempotent calls (avoids duplicate tips/charges)
         if (!canRetry) {
-          throw lastError;
+          throw interceptedError;
         }
 
         if (attempt < attempts - 1) {
@@ -803,7 +771,9 @@ export class HttpClient {
       }
     }
 
-    throw lastError || new Error('Request failed after retries');
+    throw hasInterceptedError
+      ? interceptedError
+      : lastError ?? new Error('Request failed after retries');
   }
 
   /**
