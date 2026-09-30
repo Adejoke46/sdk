@@ -26,6 +26,8 @@ import {
 } from './stream-handler';
 import { getTracingProvider, SpanStatus } from '../lib/telemetry';
 import { prepareRequestBody, type RequestCompressionConfig } from './compress';
+import { CacheManager } from '../cache/cache-manager';
+import type { CacheOptions } from '../types/cache';
 
 export type HttpClientMode = 'live' | 'sandbox' | 'production';
 

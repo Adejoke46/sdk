@@ -174,6 +174,29 @@ describe('useTransactionHistory race guard (#26)', () => {
     expect(result.current.error).toBeUndefined();
   });
 
+  it('aborts the in-flight auto-fetch request when the options change', async () => {
+    const { client, calls } = makeClient(true);
+    const { rerender } = renderHook(
+      ({ pageSize }: { pageSize: number }) => useTransactionHistory({ page: 1, pageSize }, true),
+      { initialProps: { pageSize: 10 }, wrapper: wrapperFor(client) }
+    );
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.signal?.aborted).toBe(false);
+
+    rerender({ pageSize: 20 });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(calls).toHaveLength(2);
+    expect(calls[0]?.signal?.aborted).toBe(true);
+    expect(calls[1]?.signal?.aborted).toBe(false);
+  });
+
   it('collapses rapid setPageSize calls into one fetch for the latest size', async () => {
     vi.useFakeTimers();
     const { client, calls } = makeClient(true);

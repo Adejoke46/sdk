@@ -428,6 +428,34 @@ describe('useCreatorBalance Hook', () => {
       );
     });
 
+    it('aborts the previous in-flight request when the creator id changes', async () => {
+      const signals: AbortSignal[] = [];
+      mockRequest.mockImplementation(
+        (_method: string, _url: string, _body: unknown, opts?: { signal?: AbortSignal }) => {
+          if (opts?.signal) signals.push(opts.signal);
+          return new Promise((_resolve, reject) => {
+            opts?.signal?.addEventListener('abort', () => {
+              const err = new Error('Aborted');
+              err.name = 'AbortError';
+              reject(err);
+            });
+          });
+        }
+      );
+
+      const { rerender } = renderHook(
+        ({ creatorId }: { creatorId: string }) => useCreatorBalance(creatorId, true),
+        { initialProps: { creatorId: 'creator-1' }, wrapper: wrapperFor() }
+      );
+
+      await waitFor(() => expect(signals).toHaveLength(1));
+      rerender({ creatorId: 'creator-2' });
+      await waitFor(() => expect(signals).toHaveLength(2));
+
+      expect(signals[0]?.aborted).toBe(true);
+      expect(signals[1]?.aborted).toBe(false);
+    });
+
     it('handles unmount mid-request without error', async () => {
       let resolvePromise: (value: any) => void = () => undefined;
       const delayedPromise = new Promise((resolve) => {

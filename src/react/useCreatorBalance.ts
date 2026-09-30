@@ -88,11 +88,21 @@ export function useCreatorBalance(
     };
   }, []);
 
+  // Tracks the most recent request so a superseding fetch (e.g. the creator id
+  // changed) cancels the previous in-flight request instead of leaving it to
+  // resolve into a state update that is merely ignored.
+  const activeControllerRef = useRef<AbortController | null>(null);
+
   const withAbort = <T>(fn: (signal: AbortSignal) => Promise<T>): Promise<T> => {
+    activeControllerRef.current?.abort();
     const controller = new AbortController();
+    activeControllerRef.current = controller;
     abortControllersRef.current.add(controller);
     return fn(controller.signal).finally(() => {
       abortControllersRef.current.delete(controller);
+      if (activeControllerRef.current === controller) {
+        activeControllerRef.current = null;
+      }
     });
   };
 
