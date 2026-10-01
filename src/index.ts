@@ -60,6 +60,9 @@ export type {
 } from './types/interceptors';
 export type { RequestOptions, HttpClientOptions, HttpClientMode } from './http/http-client';
 export { HttpClient } from './http/http-client';
+export { validateSchema } from './validation/schema-validator';
+export { SchemaValidationError } from './types/validation';
+export type { ValidationSchema, ValidationSchemas, SchemaValidationIssue } from './types/validation';
 export { CacheManager } from './cache/cache-manager';
 export type { CacheOptions, CacheStats, CacheStrategy } from './types/cache';
 export { RequestQueue, type RequestQueueOptions } from './http/request-queue';

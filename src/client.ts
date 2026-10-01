@@ -64,6 +64,7 @@ import {
 import type { ErrorReporter } from './lib/error-reporter';
 import { HookManager, type HookRegistration } from './lib/hooks';
 import { ThrottleManager } from './http/throttle-manager';
+import type { ValidationSchemas } from './types/validation';
 import { OfflineManager } from './offline/sync';
 import type {
   OfflineConfig,
@@ -79,6 +80,8 @@ export type ClientMode = 'sandbox' | 'live' | 'production';
 
 export interface ClientConfig {
   baseUrl: string;
+  /** Zod or Joi schemas for request bodies and API responses. */
+  schemas?: ValidationSchemas;
   token?: string;
   timeout?: number;
   /**
@@ -176,6 +179,7 @@ export class DorisioClient {
     this.config = {
       timeout: config.timeout || 30000,
       baseUrl: config.baseUrl.replace(/\/$/, ''),
+      schemas: config.schemas,
       token: config.token,
       mode,
       sandboxSeed: config.sandboxSeed,
@@ -225,6 +229,7 @@ export class DorisioClient {
     );
 
     this.httpClient = new HttpClient(this.config.baseUrl, {
+      schemas: config.schemas,
       timeout: this.config.timeout,
       retryAttempts: getConfig().retryAttempts,
       mode,
@@ -556,6 +561,7 @@ export class DorisioClient {
       try {
         // Create a temporary httpClient pointed at this endpoint
         const tempClient = new HttpClient(endpointUrl, {
+          schemas: this.config.schemas,
           timeout: this.config.timeout,
           retryAttempts: getConfig().retryAttempts,
           mode: this.mode,
