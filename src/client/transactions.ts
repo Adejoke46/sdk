@@ -166,14 +166,16 @@ export async function getTipStatus(
   options?: Partial<RequestOptions>
 ): Promise<Transaction> {
   RequestValidator.nonEmptyString(transactionId, 'transactionId');
-  const response = options
-    ? await this.request(
-        'GET',
-        `/api/v1/transactions/${transactionId}`,
-        undefined,
-        options
-      )
-    : await this.request('GET', `/api/v1/transactions/${transactionId}`);
+  const response = await this.request(
+    'GET',
+    `/api/v1/transactions/${transactionId}`,
+    undefined,
+    {
+      ...options,
+      methodName: options?.methodName ?? 'getTipStatus',
+      cacheParams: options?.cacheParams ?? [transactionId],
+    }
+  );
 
   if (!response.success || !response.data) {
     throw new Error(response.error?.message || `Failed to fetch transaction: ${transactionId}`);

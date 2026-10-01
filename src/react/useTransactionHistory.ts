@@ -214,8 +214,7 @@ export function useTransactionHistory(
           creatorIdRef.current = resolvedCreator;
 
           return transactions;
-        })
-      ),
+        }),
     [client, setError, setIsLoading, safeSetState]
   );
 
@@ -289,15 +288,16 @@ export function useTransactionHistory(
     lastOptionsRef.current = undefined;
   }, [safeSetState]);
 
-  // Auto-fetch on mount
+  const initialPage = initialOptions?.page;
+  const initialPageSize = initialOptions?.pageSize;
+
+  // Depend on scalar options so callers may safely pass a fresh options object.
   useEffect(() => {
     if (autoFetch) {
       // Error is already reflected in hook state; just make sure it can't go unhandled.
-      logRejection(fetchHistory(initialOptions), 'useTransactionHistory auto-fetch');
+      logRejection(fetchHistory({ page: initialPage, pageSize: initialPageSize }), 'useTransactionHistory auto-fetch');
     }
-    // Intentionally mount-only; callers can refetch when inputs change.
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only autoFetch
-  }, []);
+  }, [autoFetch, fetchHistory, initialPage, initialPageSize]);
 
   // Tear down in-flight work on unmount: no debounced fetch or late
   // response may touch state after this hook is gone.

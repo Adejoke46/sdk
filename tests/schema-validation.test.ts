@@ -6,6 +6,38 @@ import { SchemaValidationError } from '../src/types/validation';
 afterEach(() => vi.unstubAllGlobals());
 
 describe('HTTP schema validation', () => {
+  it('validates cached responses using each caller schema', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ amount: '8' })));
+    vi.stubGlobal('fetch', fetchMock);
+    const client = new HttpClient('https://example.com', { cache: { enabled: true } });
+    await expect(client.request('/tips', { method: 'GET' })).resolves.toEqual({ amount: '8' });
+    await expect(client.request('/tips', {
+      method: 'GET', schemas: { response: z.object({ amount: z.coerce.number() }) },
+    })).resolves.toEqual({ amount: 8 });
+    await expect(client.request('/tips', {
+      method: 'GET', schemas: { response: z.object({ amount: z.number() }) },
+    })).rejects.toBeInstanceOf(SchemaValidationError);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('validates sandbox responses without fetching', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const client = new HttpClient('https://example.com', {
+      mode: 'sandbox', schemas: { response: z.never() },
+    });
+    await expect(client.request('/api/v1/creators', { method: 'GET' })).rejects.toBeInstanceOf(SchemaValidationError);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+  it('validates the final response after response interceptors', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ amount: '8' }))));
+    const client = new HttpClient('https://example.com', {
+      schemas: { response: z.object({ amount: z.number() }) },
+    });
+    client.getInterceptors().addResponseInterceptor((value) => ({ amount: Number((value as { amount: string }).amount) }));
+    await expect(client.request('/tips', { method: 'GET' })).resolves.toEqual({ amount: 8 });
+  });
+
   it('transforms the request before sending and the response before returning', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,

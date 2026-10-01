@@ -13,7 +13,7 @@ describe('RequestSigner', () => {
     expect(signedHeaders['X-Timestamp']).toBe('1700000000000');
     expect(signedHeaders['X-Signature']).toBeDefined();
     expect(typeof signedHeaders['X-Signature']).toBe('string');
-    expect(signedHeaders['X-Signature'].length).toBe(64);
+    expect(signedHeaders['X-Signature']?.length).toBe(64);
     expect(signedHeaders['Content-Type']).toBe('application/json');
 
     // Verify signature independently
