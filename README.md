@@ -167,7 +167,7 @@ await client.getCurrentUser();
 
 ### API Reference
 
-- **[Published API Docs](https://dorisio.github.io/sdk/)** - Auto-generated from JSDoc and deployed to GitHub Pages on every push to `main`
+- **[Published API Docs](https://docs.dorisio.dev/)** - Auto-generated from JSDoc and deployed to GitHub Pages on every push to `main`
 - **[Local TypeDoc build](./docs/index.html)** - Regenerate with `npm run docs`
 - **[Examples](./examples/)** - Runnable code samples
   - [Vanilla JS](./examples/vanilla/) - Auth, wallet, payments
@@ -449,6 +449,44 @@ transactions.forEach((tx) => {
 
 ## Configuration
 
+### Request and response schemas
+
+Pass Zod or Joi schemas to validate each request body before it is sent and each
+decoded response before it is returned. The schema's parsed value is used, so
+coercion and other transformations reach the API and the caller. Joi is optional;
+install it in your application if you use Joi schemas.
+
+```typescript
+import { z } from 'zod';
+import { DorisioClient, SchemaValidationError } from 'dorisio-sdk';
+
+const client = new DorisioClient({
+  baseUrl: 'https://api.dorisio.com',
+  schemas: {
+    request: z.object({ amount: z.coerce.number().positive() }),
+    response: z.object({ success: z.boolean(), data: z.unknown() }),
+  },
+});
+
+try {
+  const result = await client.getHttpClient().request('/tips', {
+    method: 'POST',
+    body: { amount: '10' },
+  });
+  console.log(result);
+} catch (error) {
+  if (error instanceof SchemaValidationError) {
+    console.error(error.phase, error.issues); // e.g. [{ path: 'amount', message: '...' }]
+  }
+}
+```
+
+You can also pass `schemas` in an individual `HttpClient.request` call to
+override the client defaults. Request validation applies to bodies, including
+missing bodies on POST, PUT, and PATCH. GET and DELETE calls without bodies
+skip request validation; response validation still runs. With no schemas,
+requests use the existing path without parsing or conversion.
+
 ```typescript
 const client = new DorisioClient({
   baseURL: 'https://api.dorisio.com',
@@ -724,7 +762,7 @@ MIT - See [LICENSE](./LICENSE) for details
 
 ## Support
 
-- 📖 [Published API Documentation](https://dorisio.github.io/sdk/)
+- 📖 [Published API Documentation](https://docs.dorisio.dev/)
 - 📖 [Local API Documentation](./docs/index.html)
 - 💬 [GitHub Issues](https://github.com/Dorisio/sdk/issues)
 - 📧 Support: support@dorisio.com

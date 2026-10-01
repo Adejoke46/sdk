@@ -40,6 +40,7 @@ export type {
 } from '../lib/query-builder';
 
 export type { TipRequest, CreateTipRequest } from './requests';
+export type { CacheOptions, CacheStats, CacheStrategy } from './cache';
 export type { ApiResponse, PaginationMeta, PaginatedResponse } from './api';
 export {
   DorisioError,
@@ -78,6 +79,25 @@ export type {
   LoggerOptions,
 } from '../lib/logger';
 export { Logger, createLogger } from '../lib/logger';
+
+// Offline-first storage and sync exports
+export type {
+  OfflineConfig,
+  StorageBackendType,
+  QueuedOperation,
+  OperationStatus,
+  OperationType,
+  SyncState,
+  SyncResult,
+  SyncConflict,
+  OfflineSyncEventType,
+  OfflineSyncEventListener,
+  SyncOptions,
+  StorageStats,
+  ConflictResolutionStrategy,
+  IStorageBackend,
+  OperationFilter,
+} from './offline';
 
 // Schema exports for consumer validation
 export {
