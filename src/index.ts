@@ -243,6 +243,14 @@ export type {
 // Re-export utils
 export { ApiErrorHandler, RequestValidator } from './utils';
 
+// Re-export idempotency manager
+export {
+  IdempotencyManager,
+  getIdempotencyManager,
+  type IdempotencyManagerOptions,
+  type IdempotencyRecord,
+} from './utils/idempotency-manager';
+
 // Re-export webhook utilities
 export {
   verifyWebhookSignature,
