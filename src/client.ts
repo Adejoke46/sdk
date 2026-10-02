@@ -17,6 +17,7 @@ import { FailoverManager, type EndpointConfig } from './http/failover-manager';
 import { ResponseNormalizer } from './http/response-normalizer';
 import { getConfig } from './config';
 import { ApiResponse } from './types/api';
+import { Analytics, type AnalyticsOptions, type AnalyticsSnapshot, type AnalyticsExportFormat, type AnalyticsListener } from './lib/analytics';
 import {
   Creator,
   CreatorProfile,
@@ -228,6 +229,10 @@ export class DorisioClient {
       config.analytics === false ? { enabled: false } : config.analytics
     );
 
+    if (config.requestSigning) {
+      this.requestSigner = new RequestSigner(config.requestSigning);
+    }
+
     this.httpClient = new HttpClient(this.config.baseUrl, {
       schemas: config.schemas,
       timeout: this.config.timeout,
@@ -258,6 +263,12 @@ export class DorisioClient {
       },
     });
     this.cache = this.httpClient.getCacheManager();
+
+    this.graphql = new GraphQLClient({
+      baseUrl: this.config.baseUrl,
+      token: config.token,
+      mode,
+    });
 
     if (this.token) {
       this.httpClient.setHeader('Authorization', `Bearer ${this.token}`);
@@ -350,7 +361,12 @@ export class DorisioClient {
     this.getFullTransactionHistory = historyMethods.getFullTransactionHistory.bind(this);
     this.getTransactionStats = historyMethods.getTransactionStats.bind(this);
     this.getCreatorEarnings = historyMethods.getCreatorEarnings.bind(this);
-    this.exportTransactionHistory = historyMethods.exportTransactionHistory.bind(this);
+    // `bind` collapses an overloaded function to its last signature, so the
+    // streaming overload is restored through an explicit cast.
+    this.exportTransactionHistory = historyMethods.exportTransactionHistory.bind(
+      this
+    ) as unknown as DorisioClient['exportTransactionHistory'];
+    this.exportTransactionHistoryStream = historyMethods.exportTransactionHistoryStream.bind(this);
 
     this.getBalance = balanceMethods.getBalance.bind(this);
     this.getCreatorPendingPayout = balanceMethods.getCreatorPendingPayout.bind(this);
@@ -469,6 +485,7 @@ export class DorisioClient {
     }
 
     this.apiVersionHandler.checkEndpointDeprecation(path);
+    const startedAt = Date.now();
 
     const initialHeaders = options?.headers ? { ...options.headers } : {};
     const migrated = this.apiVersionHandler.migrateRequest({
@@ -479,10 +496,15 @@ export class DorisioClient {
     });
 
     const requestBody = migrated.body;
-    const requestHeaders = migrated.headers;
     const requestPath = migrated.path;
     const requestMethod = (migrated.method || method) as
       'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+
+    // Sign the outgoing request when a signing secret is configured: the
+    // signature covers the final method/path/body the transport will send.
+    const requestHeaders = this.requestSigner
+      ? this.requestSigner.signRequest(requestMethod, requestPath, migrated.headers ?? {}, requestBody)
+      : migrated.headers;
 
     const mergedOptions: Partial<RequestOptions> = {
       ...options,
@@ -583,7 +605,6 @@ export class DorisioClient {
         if (endpointUrl === endpoints[endpoints.length - 1]) break;
       }
     }
-
     throw lastError ?? new Error('All endpoints failed');
   }
 
@@ -1036,14 +1057,20 @@ export class DorisioClient {
     confirmedBalance: number;
     transactionCount: number;
   }>;
-  declare exportTransactionHistory: (
-    exportOptions?: {
-      format?: 'csv' | 'json';
-      startDate?: Date;
-      endDate?: Date;
-    },
-    options?: Partial<RequestOptions>
-  ) => Promise<string>;
+  declare exportTransactionHistory: {
+    (
+      exportOptions: historyMethods.TransactionExportOptions & { stream: true },
+      streamOptions?: StreamRequestOptions
+    ): Promise<StreamedResponse>;
+    (
+      exportOptions?: historyMethods.TransactionExportOptions,
+      options?: Partial<RequestOptions>
+    ): Promise<string>;
+  };
+  declare exportTransactionHistoryStream: (
+    exportOptions?: historyMethods.TransactionExportOptions,
+    streamOptions?: StreamRequestOptions
+  ) => Promise<StreamedResponse>;
 
   // ---------------------------------------------------------------------------
   // Balance methods
@@ -1271,6 +1298,81 @@ export class DorisioClient {
    */
   getTracingProvider() {
     return getTracingProvider();
+  }
+
+  /**
+   * Stream any GET endpoint as decoded text chunks without buffering the
+   * response in memory. Chunks arrive as the server sends them; reading
+   * applies backpressure so memory stays constant regardless of size.
+   *
+   * @param path - Request path including query string
+   * @param options - Streaming options (signal, progress, highWaterMark)
+   * @returns A live `ReadableStream<string>` plus transfer stats and abort
+   *
+   * @example
+   * ```ts
+   * const { stream } = await client.streamText('/transactions/export?format=csv&stream=true');
+ *   const reader = stream.getReader();
+ *   for (;;) {
+ *     const { done, value } = await reader.read();
+ *     if (done) break;
+ *     processChunk(value);
+ *   }
+ *   ```
+   */
+  streamText(path: string, options?: StreamRequestOptions): Promise<StreamedResponse> {
+    return this.httpClient.requestTextStream(path, options);
+  }
+
+  /**
+   * Get the API version handler instance (for registering migrations)
+   */
+  getApiVersionHandler(): ApiVersionHandler {
+    return this.apiVersionHandler;
+  }
+
+  /** Get the currently active API version. */
+  getApiVersion(): string {
+    return this.apiVersionHandler.getCurrentVersion();
+  }
+
+  /** Switch the active API version (e.g. after a migration decision). */
+  setApiVersion(version: string): void {
+    this.apiVersionHandler.setCurrentVersion(version);
+  }
+
+  /** Set or replace the request signing configuration. */
+  setRequestSigning(options: RequestSignerOptions): void {
+    this.requestSigner = new RequestSigner(options);
+  }
+
+  /** Get the analytics collector instance. */
+  getAnalytics(): Analytics {
+    return this.analytics;
+  }
+
+  /** Aggregated per-operation analytics snapshot. */
+  getAnalyticsSnapshot(): AnalyticsSnapshot {
+    return this.analytics.getSnapshot();
+  }
+
+  /** Export collected analytics as JSON (`'json'`) or CSV (`'csv'`). */
+  exportAnalytics(format: AnalyticsExportFormat = 'json'): string {
+    return this.analytics.exportMetrics(format);
+  }
+
+  /** Subscribe to analytics events; returns an unsubscribe function. */
+  onAnalyticsEvent(listener: AnalyticsListener): () => void {
+    return this.analytics.subscribe(listener);
+  }
+
+  /**
+   * Emit a debug diagnostic through the configured logger (no-op unless `debug` is set).
+   */
+  private log(message: string, data?: unknown): void {
+    if (this.config.debug && this.config.logger) {
+      this.config.logger(message, data);
+    }
   }
 
   /**

@@ -11,7 +11,8 @@ import {
 } from '../types/schemas';
 import { filterTransactionsByDateRange, normalizeTransactionStats } from '../utils/transaction-normalizers';
 import { DorisioClient } from '../client';
-import { RequestOptions } from '../http/http-client';
+import { RequestOptions, type StreamedResponse } from '../http/http-client';
+import type { StreamRequestOptions } from '../types/stream';
 
 /**
  * Get full transaction history with filters
@@ -185,15 +186,37 @@ export async function getCreatorEarnings(
 }
 
 /**
+ * Options accepted by {@link exportTransactionHistory} and
+ * {@link exportTransactionHistoryStream}.
+ */
+export interface TransactionExportOptions {
+  format?: 'csv' | 'json';
+  startDate?: Date;
+  endDate?: Date;
+  /**
+   * Stream the export instead of buffering it (Issue #120).
+   *
+   * When `true` the call resolves to a {@link StreamedResponse}
+   * (`stream` / `stats` / `abort`) instead of the exported string, and the
+   * second argument is interpreted as {@link StreamRequestOptions}. Memory
+   * stays O(chunk) regardless of export size.
+   */
+  stream?: boolean;
+}
+
+/**
  * Export transaction history (CSV or JSON)
  * GET /transactions/export
  *
- * @param exportOptions - Export formatting and range filters
+ * @param exportOptions - Export formatting, range filters and streaming flag
  * @param exportOptions.format - Output format ('csv' or 'json', default: 'json')
  * @param exportOptions.startDate - Optional start date
  * @param exportOptions.endDate - Optional end date
- * @param options - Optional request options including custom HTTP headers
- * @returns Raw exported data string
+ * @param exportOptions.stream - Stream the response instead of buffering it
+ * @param options - Optional request options (or {@link StreamRequestOptions}
+ *   when `stream: true`)
+ * @returns Raw exported data string, or a {@link StreamedResponse} when
+ *   `stream: true`
  *
  * @throws {Error} If export fails
  *
@@ -204,17 +227,46 @@ export async function getCreatorEarnings(
  *   startDate: new Date('2024-01-01'),
  * });
  * console.log(csvData);
+ *
+ * // Large exports: stream instead of buffering the whole response.
+ * const { stream, stats } = await client.exportTransactionHistory({
+ *   format: 'csv',
+ *   stream: true,
+ * });
+ * const reader = stream.getReader();
+ * while (true) {
+ *   const { done, value } = await reader.read();
+ *   if (done) break;
+ *   processChunk(value);
+ * }
+ * console.log(`streamed ${stats.totalBytes} bytes in ${stats.chunks} chunks`);
  * ```
  */
+export function exportTransactionHistory(
+  this: DorisioClient,
+  exportOptions: TransactionExportOptions & { stream: true },
+  streamOptions?: StreamRequestOptions
+): Promise<StreamedResponse>;
+
+export function exportTransactionHistory(
+  this: DorisioClient,
+  exportOptions?: TransactionExportOptions & { stream?: false },
+  options?: Partial<RequestOptions>
+): Promise<string>;
+
 export async function exportTransactionHistory(
   this: DorisioClient,
-  exportOptions?: {
-    format?: 'csv' | 'json';
-    startDate?: Date;
-    endDate?: Date;
-  },
-  options?: Partial<RequestOptions>
-): Promise<string> {
+  exportOptions?: TransactionExportOptions,
+  options?: Partial<RequestOptions> | StreamRequestOptions
+): Promise<string | StreamedResponse> {
+  if (exportOptions?.stream) {
+    return exportTransactionHistoryStream.call(
+      this,
+      exportOptions,
+      options as StreamRequestOptions | undefined
+    );
+  }
+
   const format = exportOptions?.format ?? 'json';
   const params = new URLSearchParams();
   params.append('format', format);
@@ -236,4 +288,59 @@ export async function exportTransactionHistory(
   }
 
   return String(response.data);
+}
+
+/**
+ * Export transaction history as a stream (CSV or JSON)
+ * GET /transactions/export?stream=true
+ *
+ * Streaming variant of {@link exportTransactionHistory} for large exports.
+ * The response is consumed incrementally: chunks are decoded and delivered
+ * to the consumer as they arrive, with reader-driven backpressure, so SDK
+ * memory stays constant (O(chunk size)) no matter how large the export is.
+ *
+ * @param exportOptions - Export formatting and range filters
+ * @param exportOptions.format - Output format ('csv' or 'json', default: 'csv')
+ * @param exportOptions.startDate - Optional start date
+ * @param exportOptions.endDate - Optional end date
+ * @param streamOptions - Streaming options (signal, progress, backpressure)
+ * @returns A live `ReadableStream<string>` of text chunks plus transfer stats
+ *   and an `abort()` handle
+ *
+ * @example
+ * ```ts
+ * const { stream } = await client.exportTransactionHistoryStream({
+ *   format: 'csv',
+ *   startDate: new Date('2024-01-01'),
+ * });
+ *
+ * const reader = stream.getReader();
+ * for (;;) {
+ *   const { done, value } = await reader.read();
+ *   if (done) break;
+ *   processChunk(value); // incremental processing — memory stays flat
+ * }
+ * ```
+ */
+export async function exportTransactionHistoryStream(
+  this: DorisioClient,
+  exportOptions?: TransactionExportOptions,
+  streamOptions?: StreamRequestOptions
+) {
+  const format = exportOptions?.format ?? 'csv';
+  const params = new URLSearchParams();
+  params.append('format', format);
+  params.append('stream', 'true');
+
+  if (exportOptions?.startDate) {
+    params.append('startDate', exportOptions.startDate.toISOString());
+  }
+  if (exportOptions?.endDate) {
+    params.append('endDate', exportOptions.endDate.toISOString());
+  }
+
+  return this.getHttpClient().requestTextStream(
+    `/transactions/export?${params.toString()}`,
+    streamOptions
+  );
 }

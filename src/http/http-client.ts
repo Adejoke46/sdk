@@ -6,7 +6,7 @@
  * request fingerprinting, custom headers, and sandbox/mock mode for offline testing.
  */
 
-import { ApiError, DorisioError, ErrorHandler, ErrorHandlerContext } from '../types';
+import { ApiError, DorisioError, ErrorHandler, ErrorHandlerContext, TimeoutError } from '../types';
 import { InterceptorManager } from './interceptors';
 import { generateRequestId, isRequestIdempotent, RetryConflictError } from './retry-manager';
 import { CircuitBreaker, type CircuitBreakerConfig, CircuitOpenError } from './circuit-breaker';
@@ -791,10 +791,11 @@ export class HttpClient {
               }
             }
           }
+          const errorCode = typeof error.code === 'string' ? error.code : undefined;
           throw new ApiError(
             String(error.error) || 'Request failed',
             response.status,
-            error.code,
+            errorCode,
             retryAfter,
             options.requestId
           );
@@ -969,6 +970,216 @@ export class HttpClient {
    */
   getOfflineQueueSize(): number {
     return this.offlineQueue ? this.offlineQueue.getQueueSize() : 0;
+  }
+
+  /**
+   * Make a streaming HTTP request and return the body as a `ReadableStream`
+   * of decoded text chunks (Issue #120).
+   *
+   * The response is **never buffered**: each network chunk is decoded with a
+   * streaming `TextDecoder` (multi-byte characters spanning chunks are
+   * stitched) and enqueued on the returned stream. Reading pauses and
+   * resumes with the consumer — a slow reader naturally applies
+   * backpressure — so memory stays O(chunkSize) regardless of export size.
+   *
+   * Works in Node.js >= 18 and modern browsers (global `ReadableStream`).
+   *
+   * @param path - Request path (query string included)
+   * @param options - Streaming request options
+   * @returns The stream plus transfer metadata and an abort handle
+   */
+  async requestTextStream(
+    path: string,
+    options: StreamRequestOptions = {}
+  ): Promise<StreamedResponse> {
+    const startTime = Date.now();
+    const requestId =
+      options.requestId ??
+      (this.requestIdGenerator ? this.requestIdGenerator() : generateRequestId('stream'));
+    const controller = new AbortController();
+
+    // Streaming transfer state, shared by the fetch phase and the body-read
+    // phase that follows it.
+    let aborted = false;
+    let upstreamReader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+    let activeController: ReadableStreamDefaultController<string> | undefined;
+
+    const abortError = () => {
+      const error = new Error('Streaming request aborted');
+      error.name = 'AbortError';
+      return error;
+    };
+
+    // Error the consumer-facing controller directly so caller aborts and
+    // mid-stream failures reject pending reads rather than quietly closing.
+    const fail = (error: unknown) => {
+      if (!activeController) return;
+      try {
+        activeController.error(error);
+      } catch {
+        // already closed or errored — nothing left to do
+      }
+    };
+
+    const onExternalAbort = () => {
+      aborted = true;
+      controller.abort();
+      fail(abortError());
+      void upstreamReader?.cancel().catch(() => undefined);
+    };
+    options.signal?.addEventListener('abort', onExternalAbort, { once: true });
+
+    const headers: Record<string, string> = {
+      ...this.defaultHeaders,
+      ...options.headers,
+      'X-Request-Id': requestId,
+    };
+
+    const timeoutMs = options.timeout ?? this.timeout;
+    const signal = controller.signal;
+
+    // The timeout only covers time-to-headers. Once a response exists the
+    // transfer is governed by the consumer and by the abort signal — keeping a
+    // timer armed for the whole transfer would kill legitimate long exports.
+    let timedOut = false;
+    const timeoutHandle = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, timeoutMs);
+
+    let response: Response;
+    try {
+      response = await fetch(`${this.baseUrl}${path}`, {
+        method: 'GET',
+        headers,
+        signal,
+      });
+    } catch (error) {
+      clearTimeout(timeoutHandle);
+      options.signal?.removeEventListener('abort', onExternalAbort);
+      if (timedOut) {
+        throw new TimeoutError(`Streaming request timed out after ${timeoutMs}ms`);
+      }
+      throw error;
+    }
+    clearTimeout(timeoutHandle);
+
+    this.onResponse?.(response);
+    this.log('[DORISIO] stream response', {
+      method: 'GET',
+      path,
+      status: response.status,
+      requestId,
+    });
+
+    if (!response.ok) {
+      options.signal?.removeEventListener('abort', onExternalAbort);
+      let error: Record<string, unknown> = {};
+      try {
+        const text = await response.text();
+        error = text ? this.serializer.deserialize<Record<string, unknown>>(text) : {};
+      } catch {
+        // ignore body parse failures — status is the primary signal
+      }
+      const errorCode = typeof error.code === 'string' ? error.code : undefined;
+      throw new ApiError(
+        String(error.error) || `Streaming request failed with status ${response.status}`,
+        response.status,
+        errorCode,
+        undefined,
+        requestId
+      );
+    }
+
+    const body = response.body;
+    if (!body) {
+      options.signal?.removeEventListener('abort', onExternalAbort);
+      throw new ApiError('Streaming is not supported by this runtime', 502, undefined, undefined, requestId);
+    }
+
+    const contentLength = response.headers?.get?.('content-length');
+    const totalBytes = contentLength ? parseInt(contentLength, 10) : undefined;
+    const decoder = new TextDecoder();
+    const highWaterMark = Math.max(1, options.highWaterMark ?? 4);
+
+    let bytesReceived = 0;
+    let chunksDelivered = 0;
+
+    const detach = () => options.signal?.removeEventListener('abort', onExternalAbort);
+
+    const stream = new ReadableStream<string>(
+      {
+        // Pull-driven: the body is read one chunk at a time, and only while
+        // the consumer is asking for data, up to `highWaterMark` chunks ahead.
+        // That is what keeps memory constant for arbitrarily large exports and
+        // lets a slow consumer throttle the transfer instead of buffering it.
+        async pull(controller) {
+          activeController = controller;
+          try {
+            if (aborted) throw abortError();
+            upstreamReader ??= body.getReader();
+            const result = await upstreamReader.read();
+            const chunk = result.value;
+            if (aborted) throw abortError();
+
+            if (result.done || !chunk) {
+              const tail = decoder.decode();
+              if (tail) controller.enqueue(tail);
+              detach();
+              controller.close();
+              return;
+            }
+
+            bytesReceived += chunk.byteLength;
+            chunksDelivered += 1;
+
+            if (options.onProgress) {
+              options.onProgress({
+                bytesReceived,
+                totalBytes,
+                chunkSize: chunk.byteLength,
+                percentComplete:
+                  totalBytes && totalBytes > 0
+                    ? Math.min(100, (bytesReceived / totalBytes) * 100)
+                    : undefined,
+              });
+            }
+
+            // `stream: true` holds an incomplete multi-byte sequence back until
+            // the bytes that finish it arrive in a following chunk.
+            const text = decoder.decode(chunk, { stream: true });
+            if (text) controller.enqueue(text);
+          } catch (error) {
+            detach();
+            // Rejecting pull() errors the readable stream, so a mid-stream
+            // network failure surfaces on the consumer's pending read().
+            throw error;
+          }
+        },
+        async cancel(reason) {
+          detach();
+          aborted = true;
+          await upstreamReader?.cancel(reason);
+        },
+      },
+      { highWaterMark }
+    );
+
+    return {
+      stream,
+      stats: {
+        get totalBytes() {
+          return bytesReceived;
+        },
+        get chunks() {
+          return chunksDelivered;
+        },
+        get durationMs() {
+          return Date.now() - startTime;
+        },
+      },
+      abort: onExternalAbort,
+    };
   }
 
   /**

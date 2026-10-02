@@ -59,6 +59,7 @@ export type {
   ErrorInterceptor,
 } from './types/interceptors';
 export type { RequestOptions, HttpClientOptions, HttpClientMode } from './http/http-client';
+export type { StreamedResponse } from './http/http-client';
 export { HttpClient } from './http/http-client';
 export { validateSchema } from './validation/schema-validator';
 export { SchemaValidationError } from './types/validation';
