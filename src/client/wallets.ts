@@ -1,1 +1,269 @@
-LyoqCiAqIFdhbGxldCBNZXRob2RzCiAqCiAqIFNESyBtZXRob2RzIGZvciB3YWxsZXQgb3BlcmF0aW9ucy4KICovCgppbXBvcnQgeyBXYWxsZXQsIENyZWF0ZVdhbGxldFJlcXVlc3QsIFVwZGF0ZVdhbGxldFJlcXVlc3QgfSBmcm9tICcuLi90eXBlcy9tb2RlbHMnOwppbXBvcnQgeyBub3JtYWxpemVXYWxsZXQsIG5vcm1hbGl6ZVdhbGxldHMgfSBmcm9tICcuLi91dGlscy9ub3JtYWxpemVycyc7CmltcG9ydCB7IERvcmlzaW9DbGllbnQgfSBmcm9tICcuLi9jbGllbnQnOwppbXBvcnQgeyBSZXF1ZXN0VmFsaWRhdG9yIH0gZnJvbSAnLi4vdXRpbHMvdmFsaWRhdG9ycyc7CmltcG9ydCB7IFJlcXVlc3RPcHRpb25zIH0gZnJvbSAnLi4vaHR0cC9odHRwLWNsaWVudCc7CmltcG9ydCB7IElkZW1wb3RlbmN5TWFuYWdlciB9IGZyb20gJy4uL3V0aWxzL2lkZW1wb3RlbmN5LW1hbmFnZXInOwoKLyoqCiAqIENvbm5lY3QgYSB3YWxsZXQgdG8gdXNlciBhY2NvdW50CiAqIFBPU1QgL3dhbGxldHMKICoKICogQ29ubmVjdHMgYSBTdGVsbGFyIHdhbGxldCBwdWJsaWMga2V5IHRvIHRoZSBhdXRoZW50aWNhdGVkIHVzZXIgYWNjb3VudC4KICoKICogQW4gaWRlbXBvdGVuY3kga2V5IGlzIGF1dG9tYXRpY2FsbHkgZ2VuZXJhdGVkIGFuZCBwZXJzaXN0ZWQgaW4gYnJvd3NlcgogKiBsb2NhbCBzdG9yYWdlIGZvciAzMCBkYXlzLiBSZXRyeWluZyB0aGUgc2FtZSByZXF1ZXN0IHdpdGggdGhlIHNhbWUga2V5IHdpbGwKICogcmV0dXJuIHRoZSBvcmlnaW5hbCByZXNwb25zZSB3aXRob3V0IGNyZWF0aW5nIGEgZHVwbGljYXRlIHdhbGxldC4KICoKICogQHBhcmFtIGRhdGEgLSBXYWxsZXQgY29ubmVjdGlvbiByZXF1ZXN0IGRldGFpbHMKICogQHBhcmFtIGRhdGEucHVibGljS2V5IC0gU3RlbGxhciBwdWJsaWMga2V5IChHLi4uKQogKiBAcGFyYW0gZGF0YS5uaWNrbmFtZSAtIE9wdGlvbmFsIHVzZXItZnJpZW5kbHkgbmlja25hbWUgZm9yIHRoZSB3YWxsZXQKICogQHBhcmFtIGRhdGEuaWRlbXBvdGVuY3lLZXkgLSBPcHRpb25hbCBpZGVtcG90ZW5jeSBrZXk7IGF1dG8tZ2VuZXJhdGVkIGlmIG9taXR0ZWQKICogQHBhcmFtIG9wdGlvbnMgLSBPcHRpb25hbCByZXF1ZXN0IG9wdGlvbnMgaW5jbHVkaW5nIGN1c3RvbSBIVFRQIGhlYWRlcnMKICogQHJldHVybnMgVGhlIGNvbm5lY3RlZCB3YWxsZXQgcmVjb3JkCiAqCiAqIEB0aHJvd3Mge0Vycm9yfSBJZiBwdWJsaWNLZXkgaXMgbWlzc2luZyBvciByZXF1ZXN0IGZhaWxzCiAqCiAqIEBleGFtcGxlCiAqIGBgYHRzCiAqIC8vIEF1dG8tZ2VuZXJhdGVkIGlkZW1wb3RlbmN5IGtleQogKiBjb25zdCB3YWxsZXQgPSBhd2FpdCBjbGllbnQuY29ubmVjdFdhbGxldCh7CiAqICAgcHVibGljS2V5OiAnR0JSUFlISUwyQ0kzRk5RNEJYTEZNTkRMRkpVTlBVMkhZM1pNRlhZRU1QTEozRFBXRlVCTktNTU0nLAogKiAgIG5pY2tuYW1lOiAnTXkgUHJpbWFyeSBXYWxsZXQnLAogKiB9KTsKICogY29uc29sZS5sb2coJ0Nvbm5lY3RlZCB3YWxsZXQ6Jywgd2FsbGV0LmlkKTsKICoKICogLy8gRXhwbGljaXQgaWRlbXBvdGVuY3kga2V5IGZvciBzYWZlIHJldHJpZXMKICogY29uc3Qga2V5ID0gJzExMTExMTExLTExMTEtNDExMS04MTExLTExMTExMTExMTExMSc7CiAqIGNvbnN0IHdhbGxldDIgPSBhd2FpdCBjbGllbnQuY29ubmVjdFdhbGxldCgKICogICB7IHB1YmxpY0tleTogJ0dCUlBZSElMMkNJM0ZOUTRCWExGTU5ETExKVU5QVTJIWTNaTUZYWEVNUEpKM0RQV0ZVQk5LTU1NJywgaWRlbXBvdGVuY3lLZXk6IGtleSB9LAogKiAgIHsgaGVhZGVyczogeyAnWC1SZXF1ZXN0LUlEJzogJ2Nvbm5lY3Qtd2FsbGV0LTAxJyB9IH0KICogKTsKICogLy8gUmV0cnlpbmcgd2l0aCB0aGUgc2FtZSBrZXkgcmV0dXJucyB0aGUgc2FtZSByZXNwb25zZQogKiBjb25zdCByZXRyeSA9IGF3YWl0IGNsaWVudC5jb25uZWN0V2FsbGV0KHsKICogICBwdWJsaWNLZXk6ICdHQlJQWUhJTDJDSTNGTlE0QlhMRk1ORExMSlVOUFUySFkzWk1GWFhFTVBKSjNEUFdGVUJOS01NTScsCiAqICAgaWRlbXBvdGVuY3lLZXk6IGtleSwKICogfSk7CiAqIGBgYAogKi8KZXhwb3J0IGFzeW5jIGZ1bmN0aW9uIGNvbm5lY3RXYWxsZXQoCiAgdGhpczogRG9yaXNpb0NsaWVudCwKICBkYXRhOiBDcmVhdGVXYWxsZXRSZXF1ZXN0LAogIG9wdGlvbnM/OiBQYXJ0aWFsPFJlcXVlc3RPcHRpb25zPgp):IFByb21pc2U8V2FsbGV0PiB7CiAgUmVxdWVzdFZhbGlkYXRvci5yZXF1aXJlZChkYXRhLCAnd2FsbGV0IGRhdGEnKTsKICBSZXF1ZXN0VmFsaWRhdG9yLm5vbkVtcHR5U3RyaW5nKGRhdGEucHVibGljS2V5LCAncHVibGljS2V5Jyk7CgogIGNvbnN0IGlkZW1wb3RlbmN5S2V5ID0gSWRlbXBvdGVuY3lNYW5hZ2VyLnJlc29sdmVLZXkoZGF0YS5pZGVtcG90ZW5jeUtleSk7CiAgY29uc3QgcmVxdWVzdE9wdGlvbnMgPSBJZGVtcG90ZW5jeU1hbmFnZXIud2l0aElkZW1wb3RlbmN5S2V5KG9wdGlvbnMsIGlkZW1wb3RlbmN5S2V5KTsKCiAgY29uc3QgcmVzcG9uc2UgPSBhd2FpdCB0aGlzLnJlcXVlc3QoJ1BPU1QnLCAnL3dhbGxldHMnLCBkYXRhLCByZXF1ZXN0T3B0aW9ucyk7CgogIGlmICghcmVzcG9uc2Uuc3VjY2VzcyB8fCAhcmVzcG9uc2UuZGF0YSkgewogICAgdGhyb3cgbmV3IEVycm9yKCdGYWlsZWQgdG8gY29ubmVjdCB3YWxsZXQnKTsKICB9CgogIHJldHVybiBub3JtYWxpemVXYWxsZXQocmVzcG9uc2UuZGF0YSk7Cn0KCi8qKgogKiBEaXNjb25uZWN0IGEgd2FsbGV0IGZyb20gdXNlciBhY2NvdW50CiAqIERFTEVURSAvd2FsbGV0cy86aWQKICoKICogUmVtb3ZlcyBhIGNvbm5lY3RlZCB3YWxsZXQgZnJvbSB0aGUgYXV0aGVudGljYXRlZCB1c2VyJ3MgYWNjb3VudC4KICoKICogQW4gaWRlbXBvdGVuY3kga2V5IGlzIGF1dG9tYXRpY2FsbHkgZ2VuZXJhdGVkIGFuZCBwZXJzaXN0ZWQgaW4gYnJvd3NlcgogKiBsb2NhbCBzdG9yYWdlIGZvciAzMCBkYXlzLiBSZXRyeWluZyB0aGUgc2FtZSByZXF1ZXN0IHdpdGggdGhlIHNhbWUga2V5IHdpbGwKICogYmUgc2FmZSBhbmQgcmV0dXJuIHRoZSBvcmlnaW5hbCByZXN1bHQuCiAqCiAqIEBwYXJhbSB3YWxsZXRJZCAtIFVuaXF1ZSB3YWxsZXQgaWRlbnRpZmllciAoVVVJRCkKICogQHBhcmFtIG9wdGlvbnMgLSBPcHRpb25hbCByZXF1ZXN0IG9wdGlvbnMgaW5jbHVkaW5nIGN1c3RvbSBIVFRQIGhlYWRlcnMKICoKICogQHRocm93cyB7RXJyb3J9IElmIHdhbGxldElkIGlzIGVtcHR5IG9yIGRpc2Nvbm5lY3Rpb24gZmFpbHMKICoKICogQGV4YW1wbGUKICogYGBgdHMKICogYXdhaXQgY2xpZW50LmRpc2Nvbm5lY3RXYWxsZXQoJ3dhbGxldC0xMjMnLCB7CiAqICAgaGVhZGVyczogeyAnWC1BdWRpdC1SZWFzb24nOiAndXNlci1yZXF1ZXN0ZWQtcmVtb3ZhbCcgfSwKICogfSk7CiAqIGNvbnNvbGUubG9nKCdXYWxsZXQgZGlzY29ubmVjdGVkJyk7CiAqIGBgYAogKi8KZXhwb3J0IGFzeW5jIGZ1bmN0aW9uIGRpc2Nvbm5lY3RXYWxsZXQoCiAgdGhpczogRG9yaXNpb0NsaWVudCwKICB3YWxsZXRJZDogc3RyaW5nLAogIG9wdGlvbnM/OiBQYXJ0aWFsPFJlcXVlc3RPcHRpb25zPgp):IFByb21pc2U8dm9pZD4gewogIFJlcXVlc3RWYWxpZGF0b3Iubm9uRW1wdHlTdHJpbmcod2FsbGV0SWQsICd3YWxsZXRJZCcpOwoKICBjb25zdCBpZGVtcG90ZW5jeUtleSA9IElkZW1wb3RlbmN5TWFuYWdlci5yZXNvbHZlS2V5KCk7CiAgY29uc3QgcmVxdWVzdE9wdGlvbnMgPSBJZGVtcG90ZW5jeU1hbmFnZXIud2l0aElkZW1wb3RlbmN5S2V5KG9wdGlvbnMsIGlkZW1wb3RlbmN5S2V5KTsKCiAgY29uc3QgcmVzcG9uc2UgPSBhd2FpdCB0aGlzLnJlcXVlc3QoJ0RFTEVURScsIGAvd2FsbGV0cy8ke3dhbGxldElkfWAsIHVuZGVmaW5lZCwgcmVxdWVzdE9wdGlvbnMpOwoKICBpZiAoIXJlc3BvbnNlLnN1Y2Nlc3MpIHsKICAgIHRocm93IG5ldyBFcnJvcihgRmFpbGVkIHRvIGRpc2Nvbm5lY3Qgd2FsbGV0OiAke3dhbGxldElkfWApOwogIH0KfQoKLyoqCiAqIEdldCB1c2VyJ3Mgd2FsbGV0cwogKiBHRVQgL3VzZXJzLzp1c2VySWQvd2FsbGV0cwogKgogKiBSZXRyaWV2ZXMgYWxsIGNvbm5lY3RlZCB3YWxsZXRzIGZvciBhIHNwZWNpZmllZCB1c2VyIElELgogKgogKiBAcGFyYW0gdXNlcklkIC0gVW5pcXVlIHVzZXIgaWRlbnRpZmllciAoVVVJRCkKICogQHBhcmFtIG9wdGlvbnMgLSBPcHRpb25hbCByZXF1ZXN0IG9wdGlvbnMgaW5jbHVkaW5nIGN1c3RvbSBIVFRQIGhlYWRlcnMKICogQHJldHVybnMgTGlzdCBvZiBjb25uZWN0ZWQgd2FsbGV0cwogKgogKiBAdGhyb3dzIHtFcnJvcn0gSWYgdXNlcklkIGlzIGVtcHR5IG9yIHJlcXVlc3QgZmFpbHMKICoKICogQGV4YW1wbGUKICogYGBgdHMKICogY29uc3Qgd2FsbGV0cyA9IGF3YWl0IGNsaWVudC5nZXRXYWxsZXRzKCd1c2VyLTQ1NicsIHsKICogICBoZWFkZXJzOiB7ICdYLUN1c3RvbS1DbGllbnQnOiAnZG9yaXNpby1tb2JpbGUnIH0sCiAqIH0pOwogKiBjb25zb2xlLmxvZyhgVXNlciBoYXMgJHt3YWxsZXRzLmxlbmd0aH0gd2FsbGV0c2ApOwogKiBgYGAKICovCmV4cG9ydCBhc3luYyBmdW5jdGlvbiBnZXRXYWxsZXRzKAogIHRoaXM6IERvcmlzaW9DbGllbnQsCiAgdXNlcklkOiBzdHJpbmcsCiAgb3B0aW9ucz86IFBhcnRpYWw8UmVxdWVzdE9wdGlvbnM+Cik6IFByb21pc2U8V2FsbGV0W10+IHsKICBSZXF1ZXN0VmFsaWRhdG9yLm5vbkVtcHR5U3RyaW5nKHVzZXJJZCwgJ3VzZXJJZCcpOwogIGNvbnN0IHJlc3BvbnNlID0gb3B0aW9ucwogICAgPyBhd2FpdCB0aGlzLnJlcXVlc3QoJ0dFVCcsIGAvdXNlcnMvJHt1c2VySWR9L3dhbGxldHNgLCB1bmRlZmluZWQsIG9wdGlvbnMpCiAgICA6IGF3YWl0IHRoaXMucmVxdWVzdCgnR0VUJywgYC91c2Vycy8ke3VzZXJJZH0vd2FsbGV0c2ApOwoKICBpZiAoIXJlc3BvbnNlLnN1Y2Nlc3MgfHwgIXJlc3BvbnNlLmRhdGEpIHsKICAgIHRocm93IG5ldyBFcnJvcihgRmFpbGVkIHRvIGZldGNoIHdhbGxldHMgZm9yIHVzZXI6ICR7dXNlcklkfWApOwogIH0KCiAgcmV0dXJuIG5vcm1hbGl6ZVdhbGxldHMoQXJyYXkuaXNBcnJheShyZXNwb25zZS5kYXRhKSA/IHJlc3BvbnNlLmRhdGEgOiBbXSk7Cn0KCi8qKgogKiBHZXQgd2FsbGV0IGJ5IElECiAqIEdFVCAvd2FsbGV0cy86aWQKICoKICogUmV0cmlldmVzIGEgc2luZ2xlIHdhbGxldCBieSBpdHMgdW5pcXVlIElELgogKgogKiBAcGFyYW0gd2FsbGV0SWQgLSBVbmlxdWUgd2FsbGV0IGlkZW50aWZpZXIgKFVVSUQpCiAqIEBwYXJhbSBvcHRpb25zIC0gT3B0aW9uYWwgcmVxdWVzdCBvcHRpb25zIGluY2x1ZGluZyBjdXN0b20gSFRUUCBoZWFkZXJzCiAqIEByZXR1cm5zIFdhbGxldCByZWNvcmQKICoKICogQHRocm93cyB7RXJyb3J9IElmIHdhbGxldElkIGlzIGVtcHR5IG9yIG5vdCBmb3VuZAogKgogKiBAZXhhbXBsZQogKiBgYGB0cwogKiBjb25zdCB3YWxsZXQgPSBhd2FpdCBjbGllbnQuZ2V0V2FsbGV0KCd3YWxsZXQtMTIzJyk7CiAqIGNvbnNvbGUubG9nKHdhbGxldC5wdWJsaWNLZXksIHdhbGxldC5pc1ZlcmlmaWVkKTsKICogYGBgCiAqLwpleHBvcnQgYXN5bmMgZnVuY3Rpb24gZ2V0V2FsbGV0KAogIHRoaXM6IERvcmlzaW9DbGllbnQsCiAgd2FsbGV0SWQ6IHN0cmluZywKICBvcHRpb25zPzogUGFydGlhbDxSZXF1ZXN0T3B0aW9ucz4KKS6IFByb21pc2U8V2FsbGV0PiB7CiAgUmVxdWVzdFZhbGlkYXRvci5ub25FbXB0eVN0cmluZyh3YWxsZXRJZCwgJ3dhbGxldElkJyk7CiAgY29uc3QgcmVzcG9uc2UgPSBvcHRpb25zCiAgICA/IGF3YWl0IHRoaXMucmVxdWVzdCgnR0VUJywgYC93YWxsZXRzLyR7d2FsbGV0SWR9YCwgdW5kZWZpbmVkLCBvcHRpb25zKQogICAgOiBhd2FpdCB0aGlzLnJlcXVlc3QoJ0dFVCcsIGAvd2FsbGV0cy8ke3dhbGxldElkfWApOwoKICBpZiAoIXJlc3BvbnNlLnN1Y2Nlc3MgfHwgIXJlc3BvbnNlLmRhdGEpIHsKICAgIHRocm93IG5ldyBFcnJvcihgRmFpbGVkIHRvIGZldGNoIHdhbGxldDogJHt3YWxsZXRJZH1gKTsKICB9CgogIHJldHVybiBub3JtYWxpemVXYWxsZXQocmVzcG9uc2UuZGF0YSk7Cn0KCi8qKgogKiBVcGRhdGUgd2FsbGV0IGRldGFpbHMKICogUEFUQ0ggL3dhbGxldHMvOmlkCiAqCiAqIFVwZGF0ZXMgd2FsbGV0IGF0dHJpYnV0ZXMgc3VjaCBhcyBuaWNrbmFtZSBvciBkZWZhdWx0IHN0YXR1cy4KICoKICogQW4gaWRlbXBvdGVuY3kga2V5IGlzIGF1dG9tYXRpY2FsbHkgZ2VuZXJhdGVkIGFuZCBwZXJzaXN0ZWQgaW4gYnJvd3NlcgogKiBsb2NhbCBzdG9yYWdlIGZvciAzMCBkYXlzLiBSZXRyeWluZyB0aGUgc2FtZSByZXF1ZXN0IHdpdGggdGhlIHNhbWUga2V5IHdpbGwKICogYmUgc2FmZSBhbmQgcmV0dXJuIHRoZSBvcmlnaW5hbCByZXN1bHQuCiAqCiAqIEBwYXJhbSB3YWxsZXRJZCAtIFVuaXF1ZSB3YWxsZXQgaWRlbnRpZmllciAoVVVJRCkKICogQHBhcmFtIGRhdGEgLSBBdHRyaWJ1dGVzIHRvIHVwZGF0ZQogKiBAcGFyYW0gZGF0YS5pZGVtcG90ZW5jeUtleSAtIE9wdGlvbmFsIGlkZW1wb3RlbmN5IGtleTsgYXV0by1nZW5lcmF0ZWQgaWYgb21pdHRlZAogKiBAcGFyYW0gb3B0aW9ucyAtIE9wdGlvbmFsIHJlcXVlc3Qgb3B0aW9ucyBpbmNsdWRpbmcgY3VzdG9tIEhUVFAgaGVhZGVycwogKiBAcmV0dXJucyBVcGRhdGVkIHdhbGxldCByZWNvcmQKICoKICogQHRocm93cyB7RXJyb3J9IElmIHdhbGxldElkIGlzIGVtcHR5IG9yIHVwZGF0ZSBmYWlscwogKgogKiBAZXhhbXBsZQogKiBgYGB0cwogKiBjb25zdCB1cGRhdGVkID0gYXdhaXQgY2xpZW50LnVwZGF0ZVdhbGxldCgnd2FsbGV0LTEyMycsIHsKICogICBuaWNrbmFtZTogJ1NlY29uZGFyeSBIb3QgV2FsbGV0JywKICogfSk7CiAqIGNvbnNvbGUubG9nKCdVcGRhdGVkIHdhbGxldCBuaWNrbmFtZTonLCB1cGRhdGVkLm5pY2tuYW1lKTsKICogYGBgCiAqLwpleHBvcnQgYXN5bmMgZnVuY3Rpb24gdXBkYXRlV2FsbGV0KAogIHRoaXM6IERvcmlzaW9DbGllbnQsCiAgd2FsbGV0SWQ6IHN0cmluZywKICBkYXRhOiBVcGRhdGVXYWxsZXRSZXF1ZXN0LAogIG9wdGlvbnM/OiBQYXJ0aWFsPFJlcXVlc3RPcHRpb25zPgp):IFByb21pc2U8V2FsbGV0PiB7CiAgUmVxdWVzdFZhbGlkYXRvci5ub25FbXB0eVN0cmluZyh3YWxsZXRJZCwgJ3dhbGxldElkJyk7CgogIGNvbnN0IGlkZW1wb3RlbmN5S2V5ID0gSWRlbXBvdGVuY3lNYW5hZ2VyLnJlc29sdmVLZXkoZGF0YS5pZGVtcG90ZW5jeUtleSk7CiAgY29uc3QgcmVxdWVzdE9wdGlvbnMgPSBJZGVtcG90ZW5jeU1hbmFnZXIud2l0aElkZW1wb3RlbmN5S2V5KG9wdGlvbnMsIGlkZW1wb3RlbmN5S2V5KTsKCiAgY29uc3QgcmVzcG9uc2UgPSBhd2FpdCB0aGlzLnJlcXVlc3QoJ1BBVENIJywgYC93YWxsZXRzLyR7d2FsbGV0SWR9YCwgZGF0YSwgcmVxdWVzdE9wdGlvbnMpOwoKICBpZiAoIXJlc3BvbnNlLnN1Y2Nlc3MgfHwgIXJlc3BvbnNlLmRhdGEpIHsKICAgIHRocm93IG5ldyBFcnJvcihgRmFpbGVkIHRvIHVwZGF0ZSB3YWxsZXQ6ICR7d2FsbGV0SWR9YCk7CiAgfQoKICByZXR1cm4gbm9ybWFsaXplV2FsbGV0KHJlc3BvbnNlLmRhdGEpOwp9CgovKioKICogVmVyaWZ5IHdhbGxldCBvd25lcnNoaXAgKGZvciBTdGVsbGFyIHdhbGxldHMpCiAqIFBPU1QgL3dhbGxldHMvOmlkL3ZlcmlmeQogKgogKiBUcmlnZ2VycyBzaWduYXR1cmUgdmVyaWZpY2F0aW9uIG9uIGEgY29ubmVjdGVkIFN0ZWxsYXIgd2FsbGV0LgogKgogKiBBbiBpZGVtcG90ZW5jeSBrZXkgaXMgYXV0b21hdGljYWxseSBnZW5lcmF0ZWQgYW5kIHBlcnNpc3RlZCBpbiBicm93c2VyCiAqIGxvY2FsIHN0b3JhZ2UgZm9yIDMwIGRheXMuIFJldHJ5aW5nIHRoZSBzYW1lIHJlcXVlc3Qgd2l0aCB0aGUgc2FtZSBrZXkgd2lsbAogKiBiZSBzYWZlIGFuZCByZXR1cm4gdGhlIG9yaWdpbmFsIHJlc3VsdC4KICoKICogQHBhcmFtIHdhbGxldElkIC0gVW5pcXVlIHdhbGxldCBpZGVudGlmaWVyIChVVUlEKQogKiBAcGFyYW0gb3B0aW9ucyAtIE9wdGlvbmFsIHJlcXVlc3Qgb3B0aW9ucyBpbmNsdWRpbmcgY3VzdG9tIEhUVFAgaGVhZGVycwogKiBAcmV0dXJucyBWZXJpZmllZCB3YWxsZXQgcmVjb3JkCiAqCiAqIEB0aHJvd3Mge0Vycm9yfSBJZiB2ZXJpZmljYXRpb24gZmFpbHMKICoKICogQGV4YW1wbGUKICogYGBgdHMKICogY29uc3QgdmVyaWZpZWRXYWxsZXQgPSBhd2FpdCBjbGllbnQudmVyaWZ5V2FsbGV0KCd3YWxsZXQtMTIzJyk7CiAqIGNvbnNvbGUubG9nKCdXYWxsZXQgaXMgdmVyaWZpZWQ6JywgdmVyaWZpZWRXYWxsZXQuaXNWZXJpZmllZCk7CiAqIGBgYAogKi8KZXhwb3J0IGFzeW5jIGZ1bmN0aW9uIHZlcmlmeVdhbGxldCgKICB0aGlzOiBEb3Jpc2lvQ2xpZW50LAogIHdhbGxldElkOiBzdHJpbmcsCiAgb3B0aW9ucz86IFBhcnRpYWw8UmVxdWVzdE9wdGlvbnM+Cik6IFByb21pc2U8V2FsbGV0PiB7CiAgUmVxdWVzdFZhbGlkYXRvci5ub25FbXB0eVN0cmluZyh3YWxsZXRJZCwgJ3dhbGxldElkJyk7CgogIGNvbnN0IGlkZW1wb3RlbmN5S2V5ID0gSWRlbXBvdGVuY3lNYW5hZ2VyLnJlc29sdmVLZXkoKTsKICBjb25zdCByZXF1ZXN0T3B0aW9ucyA9IElkZW1wb3RlbmN5TWFuYWdlci53aXRoSWRlbXBvdGVuY3lLZXkob3B0aW9ucywgaWRlbXBvdGVuY3lLZXkpOwoKICBjb25zdCByZXNwb25zZSA9IGF3YWl0IHRoaXMucmVxdWVzdCgnUE9TVCcsIGAvd2FsbGV0cy8ke3dhbGxldElkfS92ZXJpZnlgLCB1bmRlZmluZWQsIHJlcXVlc3RPcHRpb25zKTsKCiAgaWYgKCFyZXNwb25zZS5zdWNjZXNzIHx8ICFyZXNwb25zZS5kYXRhKSB7CiAgICB0aHJvdyBuZXcgRXJyb3IoYEZhaWxlZCB0byB2ZXJpZnkgd2FsbGV0OiAke3dhbGxldElkfWApOwogIH0KCiAgcmV0dXJuIG5vcm1hbGl6ZVdhbGxldChyZXNwb25zZS5kYXRhKTsKfQoKLyoqCiAqIEdldCB3YWxsZXQgYmFsYW5jZQogKiBHRVQgL3dhbGxldHMvOmlkL2JhbGFuY2UKICoKICogUmV0cmlldmVzIHRoZSBjdXJyZW50IGJhbGFuY2UgZm9yIGEgc3BlY2lmaWMgd2FsbGV0IElELgogKgogKiBAcGFyYW0gd2FsbGV0SWQgLSBVbmlxdWUgd2FsbGV0IGlkZW50aWZpZXIgKFVVSUQpCiAqIEBwYXJhbSBvcHRpb25zIC0gT3B0aW9uYWwgcmVxdWVzdCBvcHRpb25zIGluY2x1ZGluZyBjdXN0b20gSFRUUCBoZWFkZXJzCiAqIEByZXR1cm5zIEJhbGFuY2UgbnVtZXJpYyB2YWx1ZQogKgogKiBAdGhyb3dzIHtFcnJvcn0gSWYgd2FsbGV0IGJhbGFuY2UgY2Fubm90IGJlIHJldHJpZXZlZAogKgogKiBAZXhhbXBsZQogKiBgYGB0cwogKiBjb25zdCBiYWxhbmNlID0gYXdhaXQgY2xpZW50LmdldEJhbGFuY2UoJ3dhbGxldC0xMjMnKTsKICogY29uc29sZS5sb2coYEN1cnJlbnQgYmFsYW5jZTogJCR7YmFsYW5jZX1gKTsKICogYGBgCiAqLwpleHBvcnQgYXN5bmMgZnVuY3Rpb24gZ2V0QmFsYW5jZSgKICB0aGlzOiBEb3Jpc2lvQ2xpZW50LAogIHdhbGxldElkOiBzdHJpbmcsCiAgb3B0aW9ucz86IFBhcnRpYWw8UmVxdWVzdE9wdGlvbnM+Cik6IFByb21pc2U8bnVtYmVyPiB7CiAgY29uc3QgcmVzcG9uc2UgPSBvcHRpb25zCiAgICA/IGF3YWl0IHRoaXMucmVxdWVzdCgnR0VUJywgYC93YWxsZXRzLyR7d2FsbGV0SWR9L2JhbGFuY2VgLCB1bmRlZmluZWQsIG9wdGlvbnMpCiAgICA6IGF3YWl0IHRoaXMucmVxdWVzdCgnR0VUJywgYC93YWxsZXRzLyR7d2FsbGV0SWR9L2JhbGFuY2VgKTsKCiAgaWYgKCFyZXNwb25zZS5zdWNjZXNzIHx8IHJlc3BvbnNlLmRhdGEgPT09IHVuZGVmaW5lZCkgewogICAgdGhyb3cgbmV3IEVycm9yKGBGYWlsZWQgdG8gZmV0Y2ggd2FsbGV0IGJhbGFuY2U6ICR7d2FsbGV0SWR9YCk7CiAgfQoKICByZXR1cm4gTnVtYmVyKHJlc3BvbnNlLmRhdGEpOwp9Cg==
+/**
+ * Wallet Methods
+ *
+ * SDK methods for wallet operations.
+ */
+
+import { Wallet, CreateWalletRequest, UpdateWalletRequest } from '../types/models';
+import { normalizeWallet, normalizeWallets } from '../utils/normalizers';
+import { DorisioClient } from '../client';
+import { RequestValidator } from '../utils/validators';
+import { RequestOptions } from '../http/http-client';
+
+/**
+ * Connect a wallet to user account
+ * POST /wallets
+ *
+ * Connects a Stellar wallet public key to the authenticated user account.
+ *
+ * @param data - Wallet connection request details
+ * @param data.publicKey - Stellar public key (G...)
+ * @param data.nickname - Optional user-friendly nickname for the wallet
+ * @param options - Optional request options including custom HTTP headers
+ * @returns The connected wallet record
+ *
+ * @throws {Error} If publicKey is missing or request fails
+ *
+ * @example
+ * ```ts
+ * const wallet = await client.connectWallet(
+ *   {
+ *     publicKey: 'GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFXYEMPLJ3DPWFUBNKMMM',
+ *     nickname: 'My Primary Wallet',
+ *   },
+ *   { headers: { 'X-Request-ID': 'connect-wallet-01' } }
+ * );
+ * console.log('Connected wallet:', wallet.id);
+ * ```
+ */
+export async function connectWallet(
+  this: DorisioClient,
+  data: CreateWalletRequest,
+  options?: Partial<RequestOptions>
+): Promise<Wallet> {
+  RequestValidator.required(data, 'wallet data');
+  RequestValidator.nonEmptyString(data.publicKey, 'publicKey');
+  const response = options
+    ? await this.request('POST', '/wallets', data, options)
+    : await this.request('POST', '/wallets', data);
+
+  if (!response.success || !response.data) {
+    throw new Error('Failed to connect wallet');
+  }
+
+  return normalizeWallet(response.data);
+}
+
+/**
+ * Disconnect a wallet from user account
+ * DELETE /wallets/:id
+ *
+ * Removes a connected wallet from the authenticated user's account.
+ *
+ * @param walletId - Unique wallet identifier (UUID)
+ * @param options - Optional request options including custom HTTP headers
+ *
+ * @throws {Error} If walletId is empty or disconnection fails
+ *
+ * @example
+ * ```ts
+ * await client.disconnectWallet('wallet-123', {
+ *   headers: { 'X-Audit-Reason': 'user-requested-removal' },
+ * });
+ * console.log('Wallet disconnected');
+ * ```
+ */
+export async function disconnectWallet(
+  this: DorisioClient,
+  walletId: string,
+  options?: Partial<RequestOptions>
+): Promise<void> {
+  RequestValidator.nonEmptyString(walletId, 'walletId');
+  const response = options
+    ? await this.request('DELETE', `/wallets/${walletId}`, undefined, options)
+    : await this.request('DELETE', `/wallets/${walletId}`);
+
+  if (!response.success) {
+    throw new Error(`Failed to disconnect wallet: ${walletId}`);
+  }
+}
+
+/**
+ * Get user's wallets
+ * GET /users/:userId/wallets
+ *
+ * Retrieves all connected wallets for a specified user ID.
+ *
+ * @param userId - Unique user identifier (UUID)
+ * @param options - Optional request options including custom HTTP headers
+ * @returns List of connected wallets
+ *
+ * @throws {Error} If userId is empty or request fails
+ *
+ * @example
+ * ```ts
+ * const wallets = await client.getWallets('user-456', {
+ *   headers: { 'X-Custom-Client': 'dorisio-mobile' },
+ * });
+ * console.log(`User has ${wallets.length} wallets`);
+ * ```
+ */
+export async function getWallets(
+  this: DorisioClient,
+  userId: string,
+  options?: Partial<RequestOptions>
+): Promise<Wallet[]> {
+  RequestValidator.nonEmptyString(userId, 'userId');
+  const response = options
+    ? await this.request('GET', `/users/${userId}/wallets`, undefined, options)
+    : await this.request('GET', `/users/${userId}/wallets`);
+
+  if (!response.success || !response.data) {
+    throw new Error(`Failed to fetch wallets for user: ${userId}`);
+  }
+
+  return normalizeWallets(Array.isArray(response.data) ? response.data : []);
+}
+
+/**
+ * Get wallet by ID
+ * GET /wallets/:id
+ *
+ * Retrieves a single wallet by its unique ID.
+ *
+ * @param walletId - Unique wallet identifier (UUID)
+ * @param options - Optional request options including custom HTTP headers
+ * @returns Wallet record
+ *
+ * @throws {Error} If walletId is empty or not found
+ *
+ * @example
+ * ```ts
+ * const wallet = await client.getWallet('wallet-123');
+ * console.log(wallet.publicKey, wallet.isVerified);
+ * ```
+ */
+export async function getWallet(
+  this: DorisioClient,
+  walletId: string,
+  options?: Partial<RequestOptions>
+): Promise<Wallet> {
+  RequestValidator.nonEmptyString(walletId, 'walletId');
+  const response = options
+    ? await this.request('GET', `/wallets/${walletId}`, undefined, options)
+    : await this.request('GET', `/wallets/${walletId}`);
+
+  if (!response.success || !response.data) {
+    throw new Error(`Failed to fetch wallet: ${walletId}`);
+  }
+
+  return normalizeWallet(response.data);
+}
+
+/**
+ * Update wallet details
+ * PATCH /wallets/:id
+ *
+ * Updates wallet attributes such as nickname or default status.
+ *
+ * @param walletId - Unique wallet identifier (UUID)
+ * @param data - Attributes to update
+ * @param options - Optional request options including custom HTTP headers
+ * @returns Updated wallet record
+ *
+ * @throws {Error} If walletId is empty or update fails
+ *
+ * @example
+ * ```ts
+ * const updated = await client.updateWallet('wallet-123', {
+ *   nickname: 'Secondary Hot Wallet',
+ * });
+ * console.log('Updated wallet nickname:', updated.nickname);
+ * ```
+ */
+export async function updateWallet(
+  this: DorisioClient,
+  walletId: string,
+  data: UpdateWalletRequest,
+  options?: Partial<RequestOptions>
+): Promise<Wallet> {
+  RequestValidator.nonEmptyString(walletId, 'walletId');
+  const response = options
+    ? await this.request('PATCH', `/wallets/${walletId}`, data, options)
+    : await this.request('PATCH', `/wallets/${walletId}`, data);
+
+  if (!response.success || !response.data) {
+    throw new Error(`Failed to update wallet: ${walletId}`);
+  }
+
+  return normalizeWallet(response.data);
+}
+
+/**
+ * Verify wallet ownership (for Stellar wallets)
+ * POST /wallets/:id/verify
+ *
+ * Triggers signature verification on a connected Stellar wallet.
+ *
+ * @param walletId - Unique wallet identifier (UUID)
+ * @param options - Optional request options including custom HTTP headers
+ * @returns Verified wallet record
+ *
+ * @throws {Error} If verification fails
+ *
+ * @example
+ * ```ts
+ * const verifiedWallet = await client.verifyWallet('wallet-123');
+ * console.log('Wallet is verified:', verifiedWallet.isVerified);
+ * ```
+ */
+export async function verifyWallet(
+  this: DorisioClient,
+  walletId: string,
+  options?: Partial<RequestOptions>
+): Promise<Wallet> {
+  RequestValidator.nonEmptyString(walletId, 'walletId');
+  const response = options
+    ? await this.request('POST', `/wallets/${walletId}/verify`, undefined, options)
+    : await this.request('POST', `/wallets/${walletId}/verify`);
+
+  if (!response.success || !response.data) {
+    throw new Error(`Failed to verify wallet: ${walletId}`);
+  }
+
+  return normalizeWallet(response.data);
+}
+
+/**
+ * Get wallet balance
+ * GET /wallets/:id/balance
+ *
+ * Retrieves the current balance for a specific wallet ID.
+ *
+ * @param walletId - Unique wallet identifier (UUID)
+ * @param options - Optional request options including custom HTTP headers
+ * @returns Balance numeric value
+ *
+ * @throws {Error} If wallet balance cannot be retrieved
+ *
+ * @example
+ * ```ts
+ * const balance = await client.getBalance('wallet-123');
+ * console.log(`Current balance: $${balance}`);
+ * ```
+ */
+export async function getBalance(
+  this: DorisioClient,
+  walletId: string,
+  options?: Partial<RequestOptions>
+): Promise<number> {
+  const response = options
+    ? await this.request('GET', `/wallets/${walletId}/balance`, undefined, options)
+    : await this.request('GET', `/wallets/${walletId}/balance`);
+
+  if (!response.success || response.data === undefined) {
+    throw new Error(`Failed to fetch wallet balance: ${walletId}`);
+  }
+
+  return Number(response.data);
+}

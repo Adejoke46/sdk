@@ -1,1 +1,330 @@
-LyoqCiAqIFZlcmlmaWNhdGlvbiBNZXRob2RzCiAqCiAqIFNESyBtZXRob2RzIGZvciBjcmVhdG9yIGFuZCB3YWxsZXQgdmVyaWZpY2F0aW9uLgogKi8KCmltcG9ydCB7IENyZWF0b3IsIFdhbGxldCB9IGZyb20gJy4uL3R5cGVzL21vZGVscyc7CmltcG9ydCB7CiAgQXBpVmVyaWZpY2F0aW9uU3RhdHVzU2NoZW1hLAogIEFwaVdhbGxldENoYWxsZW5nZVNjaGVtYSwKfSBmcm9tICcuLi90eXBlcy9zY2hlbWFzJzsKaW1wb3J0IHsgbm9ybWFsaXplQ3JlYXRvciwgbm9ybWFsaXplV2FsbGV0IH0gZnJvbSAnLi4vdXRpbHMvbm9ybWFsaXplcnMnOwppbXBvcnQgeyBEb3Jpc2lvQ2xpZW50IH0gZnJvbSAnLi4vY2xpZW50JzsKaW1wb3J0IHsgUmVxdWVzdE9wdGlvbnMgfSBmcm9tICcuLi9odHRwL2h0dHAtY2xpZW50JzsKaW1wb3J0IHsgSWRlbXBvdGVuY3lNYW5hZ2VyIH0gZnJvbSAnLi4vdXRpbHMvaWRlbXBvdGVuY3ktbWFuYWdlcic7CgpleHBvcnQgaW50ZXJmYWNlIFZlcmlmaWNhdGlvblN0YXR1cyB7CiAgdmVyaWZpZWQ6IGJvb2xlYW47CiAgdmVyaWZpZWRBdD86IHN0cmluZzsKICBleHBpcmVzQXQ/OiBzdHJpbmc7Cn0KCi8qKgogKiBSZXNvbHZlIGFuIGlkZW1wb3RlbmN5IGtleSBmb3IgYSBtdXRhdGlvbiByZXF1ZXN0LgogKgogKiBJZiB0aGUgY2FsbGVyIHByb3ZpZGVkIGFuIGV4cGxpY2l0IGtleSB2aWEgY3VzdG9tIGhlYWRlcnMsIGl0IGlzIGhvbm9yZWQuCiAqIE90aGVyd2lzZSBhIGtleSBpcyBhdXRvLWdlbmVyYXRlZCBhbmQgcGVyc2lzdGVkIGluIGxvY2FsIHN0b3JhZ2Ugc28gdGhhdAogKiByZXRyaWVzIG9mIHRoZSBzYW1lIG9wZXJhdGlvbiByZXVzZSB0aGUgc2FtZSBrZXkuCiAqLwpmdW5jdGlvbiByZXNvbHZlSWRlbXBvdGVuY3lLZXkoCiAgb3BlcmF0aW9uOiBzdHJpbmcsCiAgb3B0aW9ucz86IFBhcnRpYWw8UmVxdWVzdE9wdGlvbnM+Cik6IHsgdXBkYXRlZE9wdGlvbnM6IFBhcnRpYWw8UmVxdWVzdE9wdGlvbnM+IHwgdW5kZWZpbmVkOyBrZXk6IHN0cmluZyB9IHsKICBjb25zdCBleGlzdGluZ0hlYWRlcnMgPSBvcHRpb25zPy5oZWFkZXJzID8/IHt9OwogIGNvbnN0IGV4aXN0aW5nS2V5ID0KICAgIGV4aXN0aW5nSGVhZGVyc1snSWRlbXBvdGVuY3ktS2V5J10gPz8KICAgIGV4aXN0aW5nSGVhZGVyc1snaWRlbXBvdGVuY3kta2V5J107CgogIGlmIChleGlzdGluZ0tleSkgewogICAgcmV0dXJuIHsga2V5OiBleGlzdGluZ0tleSwgdXBkYXRlZE9wdGlvbnM6IG9wdGlvbnMgfTsKICB9CgogIGNvbnN0IGtleSA9IElkZW1wb3RlbmN5TWFuYWdlci5nZXRPckNyZWF0ZUtleShvcGVyYXRpb24pOwogIHJldHVybiB7CiAgICBrZXksCiAgICB1cGRhdGVkT3B0aW9uczogewogICAgICAuLi4ob3B0aW9ucyA/PyB7fSksCiAgICAgIGhlYWRlcnM6IHsKICAgICAgICAuLi5leGlzdGluZ0hlYWRlcnMsCiAgICAgICAgJ0lkZW1wb3RlbmN5LUtleSc6IGtleSwKICAgICAgfSwKICAgIH0sCiAgfTsKfQoKLyoqCiAqIFZlcmlmeSBjcmVhdG9yIGlkZW50aXR5IChyZXF1aXJlcyBwcm9vZi9hZG1pbiBhcHByb3ZhbCkKICogUE9TVCAvY3JlYXRvcnMvOmNyZWF0b3JJZC92ZXJpZnkKICoKICogQHBhcmFtIGNyZWF0b3JJZCAtIFVuaXF1ZSBjcmVhdG9yIGlkZW50aWZpZXIgKFVVSUQpCiAqIEBwYXJhbSBvcHRpb25zIC0gT3B0aW9uYWwgcmVxdWVzdCBvcHRpb25zIGluY2x1ZGluZyBjdXN0b20gSFRUUCBoZWFkZXJzCiAqIEByZXR1cm5zIFZlcmlmaWVkIENyZWF0b3IgcmVjb3JkCiAqCiAqIEB0aHJvd3Mge0Vycm9yfSBJZiBjcmVhdG9yIHZlcmlmaWNhdGlvbiBmYWlscwogKgogKiBAZXhhbXBsZQogKiBgYGB0cwogKiBjb25zdCBjcmVhdG9yID0gYXdhaXQgY2xpZW50LnZlcmlmeUNyZWF0b3IoJ2NyZWF0b3ItMTIzJywgewogKiAgIGhlYWRlcnM6IHsgJ1gtQWRtaW4tVG9rZW4nOiAnYWRtaW4tc2VjcmV0JyB9LAogKiB9KTsKICogY29uc29sZS5sb2coJ0NyZWF0b3IgdmVyaWZpZWQ6JywgY3JlYXRvci52ZXJpZmllZCk7CiAqIGBgYAogKi8KZXhwb3J0IGFzeW5jIGZ1bmN0aW9uIHZlcmlmeUNyZWF0b3IoCiAgdGhpczogRG9yaXNpb0NsaWVudCwKICBjcmVhdG9ySWQ6IHN0cmluZywKICBvcHRpb25zPzogUGFydGlhbDxSZXF1ZXN0T3B0aW9ucz4KKTogUHJvbWlzZTxDcmVhdG9yPiB7CiAgY29uc3QgeyB1cGRhdGVkT3B0aW9ucyB9ID0gcmVzb2x2ZUlkZW1wb3RlbmN5S2V5KAogICAgYHZlcmlmeS1jcmVhdG9yOiR7Y3JlYXRvcklkfWAsCiAgICBvcHRpb25zCiAgKTsKCiAgY29uc3QgcmVzcG9uc2UgPSB1cGRhdGVkT3B0aW9ucwogICAgPyBhd2FpdCB0aGlzLnJlcXVlc3QoJ1BPU1QnLCBgL2NyZWF0b3JzLyR7Y3JlYXRvcklkfS92ZXJpZnlgLCB1bmRlZmluZWQsIHVwZGF0ZWRPcHRpb25zKQogICAgOiBhd2FpdCB0aGlzLnJlcXVlc3QoJ1BPU1QnLCBgL2NyZWF0b3JzLyR7Y3JlYXRvcklkfS92ZXJpZnlgKTsKCiAgaWYgKCFyZXNwb25zZS5zdWNjZXNzIHx8ICFyZXNwb25zZS5kYXRhKSB7CiAgICB0aHJvdyBuZXcgRXJyb3IoYEZhaWxlZCB0byB2ZXJpZnkgY3JlYXRvcjogJHtjcmVhdG9ySWR9YCk7CiAgfQoKICByZXR1cm4gbm9ybWFsaXplQ3JlYXRvcihyZXNwb25zZS5kYXRhKTsKfQoKLyoqCiAqIFJlcXVlc3QgY3JlYXRvciB2ZXJpZmljYXRpb24gKHN1Ym1pdHMgZm9yIHJldmlldykKICogUE9TVCAvY3JlYXRvcnMvOmNyZWF0b3JJZC9yZXF1ZXN0LXZlcmlmaWNhdGlvbgogKgogKiBBdXRvLWdlbmVyYXRlcyBhbiBpZGVtcG90ZW5jeSBrZXkgaWYgb25lIGlzIG5vdCBwcm92aWRlZCB2aWEgY3VzdG9tCiAqIGhlYWRlcnMsIGFuZCBwZXJzaXN0cyBpdCBpbiBsb2NhbCBzdG9yYWdlIGZvciByZXRyeSBzYWZldHkuCiAqCiAqIEBwYXJhbSBjcmVhdG9ySWQgLSBVbmlxdWUgY3JlYXRvciBpZGVudGlmaWVyIChVVUlEKQogKiBAcGFyYW0gZGF0YSAtIFZlcmlmaWNhdGlvbiBhcHBsaWNhdGlvbiBwYXlsb2FkCiAqIEBwYXJhbSBkYXRhLmRvY3VtZW50VHlwZSAtIFR5cGUgb2YgdmVyaWZpY2F0aW9uIGRvY3VtZW50CiAqIEBwYXJhbSBkYXRhLmRvY3VtZW50VXJsIC0gT3B0aW9uYWwgVVJMIHRvIGRvY3VtZW50IHVwbG9hZAogKiBAcGFyYW0gZGF0YS5kZXNjcmlwdGlvbiAtIE9wdGlvbmFsIGRlc2NyaXB0aW9uIG9yIG5vdGVzCiAqIEBwYXJhbSBvcHRpb25zIC0gT3B0aW9uYWwgcmVxdWVzdCBvcHRpb25zIGluY2x1ZGluZyBjdXN0b20gSFRUUCBoZWFkZXJzCiAqIEByZXR1cm5zIFZlcmlmaWNhdGlvblN0YXR1cyB3aXRoIHBlbmRpbmcvc3VibWl0dGVkIHJldmlldyBkZXRhaWxzCiAqCiAqIEB0aHJvd3Mge0Vycm9yfSBJZiByZXF1ZXN0IGZhaWxzCiAqCiAqIEBleGFtcGxlCiAqIGBgYHRzCiAqIC8vIEF1dG8tZ2VuZXJhdGVkIGlkZW1wb3RlbmN5IGtleSAoc2FmZSB0byByZXRyeSkKICogY29uc3Qgc3RhdHVzID0gYXdhaXQgY2xpZW50LnJlcXVlc3RDcmVhdG9yVmVyaWZpY2F0aW9uKCdjcmVhdG9yLTEyMycsIHsKICogICBkb2N1bWVudFR5cGU6ICdwYXNzcG9ydCcsCiAqICAgZG9jdW1lbnRVcmw6ICdodHRwczovL3N0b3JhZ2UuZXhhbXBsZS5jb20vZG9jcy9wYXNzcG9ydC5wZGYnLAogKiAgIGRlc2NyaXB0aW9uOiAnUGFzc3BvcnQgdmVyaWZpY2F0aW9uIHN1Ym1pc3Npb24nLAogKiB9KTsKICogY29uc29sZS5sb2coJ1ZlcmlmaWNhdGlvbiBzdWJtaXR0ZWQ6Jywgc3RhdHVzLnZlcmlmaWVkKTsKICoKICogLy8gRXhwbGljaXQgaWRlbXBvdGVuY3kga2V5IGZvciBjb250cm9sbGVkIHJldHJpZXMKICogY29uc3Qga2V5ID0gJzExMTExMTExLTExMTEtNDExMS04MTExLTExMTExMTExMTExMSc7CiAqIGF3YWl0IGNsaWVudC5yZXF1ZXN0Q3JlYXRvclZlcmlmaWNhdGlvbignY3JlYXRvci0xMjMnLCB7IGRvY3VtZW50VHlwZTogJ3Bhc3Nwb3J0JyB9LCB7CiAqICAgaGVhZGVyczogeyAnSWRlbXBvdGVuY3ktS2V5Jzoga2V5IH0sCiAqIH0pOwogKiBgYGAKICovCmV4cG9ydCBhc3luYyBmdW5jdGlvbiByZXF1ZXN0Q3JlYXRvclZlcmlmaWNhdGlvbigKICB0aGlzOiBEb3Jpc2lvQ2xpZW50LAogIGNyZWF0b3JJZDogc3RyaW5nLAogIGRhdGE6IHsKICAgIGRvY3VtZW50VHlwZTogc3RyaW5nOwogICAgZG9jdW1lbnRVcmw/OiBzdHJpbmc7CiAgICBkZXNjcmlwdGlvbj86IHN0cmluZzsKICB9LAogIG9wdGlvbnM/OiBQYXJ0aWFsPFJlcXVlc3RPcHRpb25zPgp):IFByb21pc2U8VmVyaWZpY2F0aW9uU3RhdHVzPiB7CiAgY29uc3QgeyB1cGRhdGVkT3B0aW9ucyB9ID0gcmVzb2x2ZUlkZW1wb3RlbmN5S2V5KAogICAgYHJlcXVlc3QtY3JlYXRvci12ZXJpZmljYXRpb246JHtjcmVhdG9ySWR9YCwKICAgIG9wdGlvbnMKICApOwoKICBjb25zdCByZXNwb25zZSA9IHVwZGF0ZWRPcHRpb25zCiAgICA/IGF3YWl0IHRoaXMucmVxdWVzdCgKICAgICAgICAnUE9TVCcsCiAgICAgICAgYC9jcmVhdG9ycy8ke2NyZWF0b3JJZH0vcmVxdWVzdC12ZXJpZmljYXRpb25gLAogICAgICAgIGRhdGEsCiAgICAgICAgdXBkYXRlZE9wdGlvbnMKICAgICAgKQogICAgOiBhd2FpdCB0aGlzLnJlcXVlc3QoCiAgICAgICAgJ1BPU1QnLAogICAgICAgIGAvY3JlYXRvcnMvJHtjcmVhdG9ySWR9L3JlcXVlc3QtdmVyaWZpY2F0aW9uYCwKICAgICAgICBkYXRhCiAgICAgICk7CgogIGlmICghcmVzcG9uc2Uuc3VjY2VzcyB8fCAhcmVzcG9uc2UuZGF0YSkgewogICAgdGhyb3cgbmV3IEVycm9yKGBGYWlsZWQgdG8gcmVxdWVzdCB2ZXJpZmljYXRpb24gZm9yIGNyZWF0b3I6ICR7Y3JlYXRvcklkfWApOwogIH0KCiAgY29uc3QgcGFyc2VkID0gQXBpVmVyaWZpY2F0aW9uU3RhdHVzU2NoZW1hLnBhcnNlKHJlc3BvbnNlLmRhdGEpOwogIHJldHVybiB7CiAgICB2ZXJpZmllZDogcGFyc2VkLnZlcmlmaWVkLAogICAgdmVyaWZpZWRBdDogcGFyc2VkLnZlcmlmaWVkQXQsCiAgICBleHBpcmVzQXQ6IHBhcnNlZC5leHBpcmVzQXQsCiAgfTsKfQoKLyoqCiAqIEdldCBjcmVhdG9yIHZlcmlmaWNhdGlvbiBzdGF0dXMKICogR0VUIC9jcmVhdG9ycy86Y3JlYXRvcklkL3ZlcmlmaWNhdGlvbi1zdGF0dXMKICoKICogQHBhcmFtIGNyZWF0b3JJZCAtIFVuaXF1ZSBjcmVhdG9yIGlkZW50aWZpZXIgKFVVSUQpCiAqIEBwYXJhbSBvcHRpb25zIC0gT3B0aW9uYWwgcmVxdWVzdCBvcHRpb25zIGluY2x1ZGluZyBjdXN0b20gSFRUUCBoZWFkZXJzCiAqIEByZXR1cm5zIFZlcmlmaWNhdGlvbiBzdGF0dXMgYW5kIHN0YXR1cyBzdGF0ZSBzdHJpbmcKICoKICogQHRocm93cyB7RXJyb3J9IElmIHJlcXVlc3QgZmFpbHMKICoKICogQGV4YW1wbGUKICogYGBgdHMKICogY29uc3Qgc3RhdHVzID0gYXdhaXQgY2xpZW50LmdldENyZWF0b3JWZXJpZmljYXRpb25TdGF0dXMoJ2NyZWF0b3ItMTIzJyk7CiAqIGNvbnNvbGUubG9nKGBDcmVhdG9yIHN0YXR1czogJHtzdGF0dXMuc3RhdHVzfSwgaXNWZXJpZmllZDogJHtzdGF0dXMudmVyaWZpZWR9YCk7CiAqIGBgYAogKi8KZXhwb3J0IGFzeW5jIGZ1bmN0aW9uIGdldENyZWF0b3JWZXJpZmljYXRpb25TdGF0dXMoCiAgdGhpczogRG9yaXNpb0NsaWVudCwKICBjcmVhdG9ySWQ6IHN0cmluZywKICBvcHRpb25zPzogUGFydGlhbDxSZXF1ZXN0T3B0aW9ucz4KKTogUHJvbWlzZTxWZXJpZmljYXRpb25TdGF0dXMgJiB7IHN0YXR1czogc3RyaW5nIH0+IHsKICBjb25zdCByZXNwb25zZSA9IG9wdGlvbnMKICAgID8gYXdhaXQgdGhpcy5yZXF1ZXN0KAogICAgICAgICdHRVQnLAogICAgICAgIGAvY3JlYXRvcnMvJHtjcmVhdG9ySWR9L3ZlcmlmaWNhdGlvbi1zdGF0dXNgLAogICAgICAgIHVuZGVmaW5lZCwKICAgICAgICBvcHRpb25zCiAgICAgICkKICAgIDogYXdhaXQgdGhpcy5yZXF1ZXN0KAogICAgICAgICdHRVQnLAogICAgICAgIGAvY3JlYXRvcnMvJHtjcmVhdG9ySWR9L3ZlcmlmaWNhdGlvbi1zdGF0dXNgCiAgICAgICk7CgogIGlmICghcmVzcG9uc2Uuc3VjY2VzcyB8fCAhcmVzcG9uc2UuZGF0YSkgewogICAgdGhyb3cgbmV3IEVycm9yKGBGYWlsZWQgdG8gZmV0Y2ggdmVyaWZpY2F0aW9uIHN0YXR1cyBmb3IgY3JlYXRvcjogJHtjcmVhdG9ySWR9YCk7CiAgfQoKICBjb25zdCBwYXJzZWQgPSBBcGlWZXJpZmljYXRpb25TdGF0dXNTY2hlbWEucGFyc2UocmVzcG9uc2UuZGF0YSk7CiAgcmV0dXJuIHsKICAgIHZlcmlmaWVkOiBwYXJzZWQudmVyaWZpZWQsCiAgICB2ZXJpZmllZEF0OiBwYXJzZWQudmVyaWZpZWRBdCwKICAgIGV4cGlyZXNBdDogcGFyc2VkLmV4cGlyZXNBdCwKICAgIHN0YXR1czogcGFyc2VkLnN0YXR1cyA/PyAndW52ZXJpZmllZCcsCiAgfTsKfQoKLyoqCiAqIFZlcmlmeSB3YWxsZXQgb3duZXJzaGlwIChjaGFsbGVuZ2UvcmVzcG9uc2UpCiAqIFBPU1QgL3dhbGxldHMvOndhbGxldElkL3ZlcmlmeQogKgogKiBAcGFyYW0gd2FsbGV0SWQgLSBVbmlxdWUgd2FsbGV0IGlkZW50aWZpZXIgKFVVSUQpCiAqIEBwYXJhbSBwcm9vZiAtIENyeXB0b2dyYXBoaWMgc2lnbmF0dXJlIHByb29mCiAqIEBwYXJhbSBvcHRpb25zIC0gT3B0aW9uYWwgcmVxdWVzdCBvcHRpb25zIGluY2x1ZGluZyBjdXN0b20gSFRUUCBoZWFkZXJzCiAqIEByZXR1cm5zIFZlcmlmaWVkIFdhbGxldCByZWNvcmQKICoKICogQHRocm93cyB7RXJyb3J9IElmIHZlcmlmaWNhdGlvbiBwcm9vZiBpcyBpbnZhbGlkCiAqCiAqIEBleGFtcGxlCiAqIGBgYHRzCiAqIGNvbnN0IHdhbGxldCA9IGF3YWl0IGNsaWVudC52ZXJpZnlXYWxsZXQoJ3dhbGxldC0xMjMnLCAnc2lnbmVkLWNoYWxsZW5nZS1wcm9vZicpOwogKiBjb25zb2xlLmxvZygnd2FsbGV0IHZlcmlmaWVkIHN1Y2Nlc3NmdWxseTonLCB3YWxsZXQuaXNWZXJpZmllZCk7CiAqIGBgYAogKi8KZXhwb3J0IGFzeW5jIGZ1bmN0aW9uIHZlcmlmeVdhbGxldCgKICB0aGlzOiBEb3Jpc2lvQ2xpZW50LAogIHdhbGxldElkOiBzdHJpbmcsCiAgcHJvb2Y/OiBzdHJpbmcsCiAgb3B0aW9ucz86IFBhcnRpYWw8UmVxdWVzdE9wdGlvbnM+Cik6IFByb21pc2U8V2FsbGV0PiB7CiAgY29uc3QgYm9keSA9IHByb29mICE9PSB1bmRlZmluZWQgPyB7IHByb29mIH0gOiB1bmRlZmluZWQ7CiAgY29uc3QgeyB1cGRhdGVkT3B0aW9ucyB9ID0gcmVzb2x2ZUlkZW1wb3RlbmN5S2V5KAogICAgYHZlcmlmeS13YWxsZXQ6JHt3YWxsZXRJZH1gLAogICAgb3B0aW9ucwogICk7CgogIGNvbnN0IHJlc3BvbnNlID0gdXBkYXRlZE9wdGlvbnMKICAgID8gYXdhaXQgdGhpcy5yZXF1ZXN0KAogICAgICAgICdQT1NUJywKICAgICAgICBgL3dhbGxldHMvJHt3YWxsZXRJZH0vdmVyaWZ5YCwKICAgICAgICBib2R5LAogICAgICAgIHVwZGF0ZWRPcHRpb25zCiAgICAgICkKICAgIDogKGJvZHkgIT09IHVuZGVmaW5lZAogICAgICAgID8gYXdhaXQgdGhpcy5yZXF1ZXN0KCdQT1NUJywgYC93YWxsZXRzLyR7d2FsbGV0SWR9L3ZlcmlmeWAsIGJvZHkpCiAgICAgICAgOiBhd2FpdCB0aGlzLnJlcXVlc3QoJ1BPU1QnLCBgL3dhbGxldHMvJHt3YWxsZXRJZH0vdmVyaWZ5YCkpOwoKICBpZiAoIXJlc3BvbnNlLnN1Y2Nlc3MgfHwgIXJlc3BvbnNlLmRhdGEpIHsKICAgIHRocm93IG5ldyBFcnJvcihgRmFpbGVkIHRvIHZlcmlmeSB3YWxsZXQ6ICR7d2FsbGV0SWR9YCk7CiAgfQoKICByZXR1cm4gbm9ybWFsaXplV2FsbGV0KHJlc3BvbnNlLmRhdGEpOwp9CgovKioKICogR2V0IHdhbGxldCB2ZXJpZmljYXRpb24gc3RhdHVzCiAqIEdFVCAvd2FsbGV0cy86d2FsbGV0SWQvdmVyaWZpY2F0aW9uLXN0YXR1cwogKgogKiBAcGFyYW0gd2FsbGV0SWQgLSBVbmlxdWUgd2FsbGV0IGlkZW50aWZpZXIgKFVVSUQpCiAqIEBwYXJhbSBvcHRpb25zIC0gT3B0aW9uYWwgcmVxdWVzdCBvcHRpb25zIGluY2x1ZGluZyBjdXN0b20gSFRUUCBoZWFkZXJzCiAqIEByZXR1cm5zIEN1cnJlbnQgdmVyaWZpY2F0aW9uIHN0YXRlIG9mIHRoZSB3YWxsZXQKICoKICogQHRocm93cyB7RXJyb3J9IElmIHJlcXVlc3QgZmFpbHMKICoKICogQGV4YW1wbGUKICogYGBgdHMKICogY29uc3Qgc3RhdHVzID0gYXdhaXQgY2xpZW50LmdldFdhbGxldFZlcmlmaWNhdGlvblN0YXR1cygnd2FsbGV0LTEyMycpOwogKiBjb25zb2xlLmxvZygnd2FsbGV0IGlzIHZlcmlmaWVkOicsIHN0YXR1cy52ZXJpZmllZCk7CiAqIGBgYAogKi8KZXhwb3J0IGFzeW5jIGZ1bmN0aW9uIGdldFdhbGxldFZlcmlmaWNhdGlvblN0YXR1cygKICB0aGlzOiBEb3Jpc2lvQ2xpZW50LAogIHdhbGxldElkOiBzdHJpbmcsCiAgb3B0aW9ucz86IFBhcnRpYWw8UmVxdWVzdE9wdGlvbnM+Cik6IFByb21pc2U8VmVyaWZpY2F0aW9uU3RhdHVzPiB7CiAgY29uc3QgcmVzcG9uc2UgPSBvcHRpb25zCiAgICA/IGF3YWl0IHRoaXMucmVxdWVzdCgKICAgICAgICAnR0VUJywKICAgICAgICBgL3dhbGxldHMvJHt3YWxsZXRJZH0vdmVyaWZpY2F0aW9uLXN0YXR1c2AsCiAgICAgICAgdW5kZWZpbmVkLAogICAgICAgIG9wdGlvbnMKICAgICAgKQogICAgOiBhd2FpdCB0aGlzLnJlcXVlc3QoCiAgICAgICAgJ0dFVCcsCiAgICAgICAgYC93YWxsZXRzLyR7d2FsbGV0SWR9L3ZlcmlmaWNhdGlvbi1zdGF0dXNgCiAgICAgICk7CgogIGlmICghcmVzcG9uc2Uuc3VjY2VzcyB8fCAhcmVzcG9uc2UuZGF0YSkgewogICAgdGhyb3cgbmV3IEVycm9yKGBGYWlsZWQgdG8gZmV0Y2ggdmVyaWZpY2F0aW9uIHN0YXR1cyBmb3Igd2FsbGV0OiAke3dhbGxldElkfWApOwogIH0KCiAgY29uc3QgcGFyc2VkID0gQXBpVmVyaWZpY2F0aW9uU3RhdHVzU2NoZW1hLnBhcnNlKHJlc3BvbnNlLmRhdGEpOwogIHJldHVybiB7CiAgICB2ZXJpZmllZDogcGFyc2VkLnZlcmlmaWVkLAogICAgdmVyaWZpZWRBdDogcGFyc2VkLnZlcmlmaWVkQXQsCiAgICBleHBpcmVzQXQ6IHBhcnNlZC5leHBpcmVzQXQsCiAgfTsKfQoKLyoqCiAqIFJlcXVlc3Qgd2FsbGV0IHZlcmlmaWNhdGlvbiBjaGFsbGVuZ2UKICogUE9TVCAvd2FsbGV0cy86d2FsbGV0SWQvdmVyaWZpY2F0aW9uLWNoYWxsZW5nZQogKgogKiBAcGFyYW0gd2FsbGV0SWQgLSBVbmlxdWUgd2FsbGV0IGlkZW50aWZpZXIgKFVVSUQpCiAqIEBwYXJhbSBvcHRpb25zIC0gT3B0aW9uYWwgcmVxdWVzdCBvcHRpb25zIGluY2x1ZGluZyBjdXN0b20gSFRUUCBoZWFkZXJzCiAqIEByZXR1cm5zIENoYWxsZW5nZSBzdHJpbmcgYW5kIGV4cGlyYXRpb24gZHVyYXRpb24gaW4gc2Vjb25kcwogKgogKiBAdGhyb3dzIHtFcnJvcn0gSWYgY2hhbGxlbmdlIHJlcXVlc3QgZmFpbHMKICoKICogQGV4YW1wbGUKICogYGBgdHMKICogY29uc3QgeyBjaGFsbGVuZ2UsIGV4cGlyZXNJbiB9ID0gYXdhaXQgY2xpZW50LnJlcXVlc3RXYWxsZXRWZXJpZmljYXRpb25DaGFsbGVuZ2UoJ3dhbGxldC0xMjMnKTsKICogY29uc29sZS5sb2coYFNpZ24gY2hhbGxlbmdlICIke2NoYWxsZW5nZX0iIHdpdGhpbiAke2V4cGlyZXNJbn1zYCk7CiAqIGBgYAogKi8KZXhwb3J0IGFzeW5jIGZ1bmN0aW9uIHJlcXVlc3RXYWxsZXRWZXJpZmljYXRpb25DaGFsbGVuZ2UoCiAgdGhpczogRG9yaXNpb0NsaWVudCwKICB3YWxsZXRJZDogc3RyaW5nLAogIG9wdGlvbnM/OiBQYXJ0aWFsPFJlcXVlc3RPcHRpb25zPgp):IFByb21pc2U8eyBjaGFsbGVuZ2U6IHN0cmluZzsgZXhwaXJlc0luOiBudW1iZXIgfT4gewogIGNvbnN0IHsgdXBkYXRlZE9wdGlvbnMgfSA9IHJlc29sdmVJZGVtcG90ZW5jeUtleSgKICAgIGByZXF1ZXN0LXdhbGxldC12ZXJpZmljYXRpb24tY2hhbGxlbmdlOiR7d2FsbGV0SWR9YCwKICAgIG9wdGlvbnMKICApOwoKICBjb25zdCByZXNwb25zZSA9IHVwZGF0ZWRPcHRpb25zCiAgICA/IGF3YWl0IHRoaXMucmVxdWVzdCgKICAgICAgICAnUE9TVCcsCiAgICAgICAgYC93YWxsZXRzLyR7d2FsbGV0SWR9L3ZlcmlmaWNhdGlvbi1jaGFsbGVuZ2VgLAogICAgICAgIHVuZGVmaW5lZCwKICAgICAgICB1cGRhdGVkT3B0aW9ucwogICAgICApCiAgICA6IGF3YWl0IHRoaXMucmVxdWVzdCgKICAgICAgICAnUE9TVCcsCiAgICAgICAgYC93YWxsZXRzLyR7d2FsbGV0SWR9L3ZlcmlmaWNhdGlvbi1jaGFsbGVuZ2VgCiAgICAgICk7CgogIGlmICghcmVzcG9uc2Uuc3VjY2VzcyB8fCAhcmVzcG9uc2UuZGF0YSkgewogICAgdGhyb3cgbmV3IEVycm9yKGBGYWlsZWQgdG8gcmVxdWVzdCB2ZXJpZmljYXRpb24gY2hhbGxlbmdlIGZvciB3YWxsZXQ6ICR7d2FsbGV0SWR9YCk7CiAgfQoKICBjb25zdCBwYXJzZWQgPSBBcGlXYWxsZXRDaGFsbGVuZ2VTY2hlbWEucGFyc2UocmVzcG9uc2UuZGF0YSk7CiAgcmV0dXJuIHsKICAgIGNoYWxsZW5nZTogcGFyc2VkLmNoYWxsZW5nZSwKICAgIGV4cGlyZXNJbjogcGFyc2VkLmV4cGlyZXNJbiwKICB9Owp9CgovKioKICogQ2hlY2sgaWYgdHJhbnNhY3Rpb24gcmVxdWlyZXMgdmVyaWZpY2F0aW9uCiAqIEdFVCAvdHJhbnNhY3Rpb25zLzp0cmFuc2FjdGlvbklkL3ZlcmlmaWVkCiAqCiAqIEBwYXJhbSB0cmFuc2FjdGlvbklkIC0gVW5pcXVlIHRyYW5zYWN0aW9uIGlkZW50aWZpZXIgKFVVSUQpCiAqIEBwYXJhbSBvcHRpb25zIC0gT3B0aW9uYWwgcmVxdWVzdCBvcHRpb25zIGluY2x1ZGluZyBjdXN0b20gSFRUUCBoZWFkZXJzCiAqIEByZXR1cm5zIFRydWUgaWYgdHJhbnNhY3Rpb24gaXMgdmVyaWZpZWQKICoKICogQHRocm93cyB7RXJyb3J9IElmIHJlcXVlc3QgZmFpbHMKICoKICogQGV4YW1wbGUKICogYGBgdHMKICogY29uc3QgaXNWZXJpZmllZCA9IGF3YWl0IGNsaWVudC5pc1RyYW5zYWN0aW9uVmVyaWZpZWQoJ3R4LTEyMycpOwogKiBjb25zb2xlLmxvZygndHJhbnNhY3Rpb24gdmVyaWZpZWQ6JywgaXNWZXJpZmllZCk7CiAqIGBgYAogKi8KZXhwb3J0IGFzeW5jIGZ1bmN0aW9uIGlzVHJhbnNhY3Rpb25WZXJpZmllZCgKICB0aGlzOiBEb3Jpc2lvQ2xpZW50LAogIHRyYW5zYWN0aW9uSWQ6IHN0cmluZywKICBvcHRpb25zPzogUGFydGlhbDxSZXF1ZXN0T3B0aW9ucz4KKTogUHJvbWlzZTxib29sZWFuPiB7CiAgY29uc3QgcmVzcG9uc2UgPSBvcHRpb25zCiAgICA/IGF3YWl0IHRoaXMucmVxdWVzdCgKICAgICAgICAnR0VUJywKICAgICAgICBgL3RyYW5zYWN0aW9ucy8ke3RyYW5zYWN0aW9uSWR9L3ZlcmlmaWVkYCwKICAgICAgICB1bmRlZmluZWQsCiAgICAgICAgb3B0aW9ucwogICAgICApCiAgICA6IGF3YWl0IHRoaXMucmVxdWVzdCgKICAgICAgICAnR0VUJywKICAgICAgICBgL3RyYW5zYWN0aW9ucy8ke3RyYW5zYWN0aW9uSWR9L3ZlcmlmaWVkYAogICAgICApOwoKICBpZiAoIXJlc3BvbnNlLnN1Y2Nlc3MgfHwgcmVzcG9uc2UuZGF0YSA9PT0gdW5kZWZpbmVkKSB7CiAgICB0aHJvdyBuZXcgRXJyb3IoYEZhaWxlZCB0byBjaGVjayB2ZXJpZmljYXRpb24gc3RhdHVzIGZvciB0cmFuc2FjdGlvbjogJHt0cmFuc2FjdGlvbklkfWApOwogIH0KCiAgcmV0dXJuIEJvb2xlYW4ocmVzcG9uc2UuZGF0YSk7Cn0K
+/**
+ * Verification Methods
+ *
+ * SDK methods for creator and wallet verification.
+ */
+
+import { Creator, Wallet } from '../types/models';
+import {
+  ApiVerificationStatusSchema,
+  ApiWalletChallengeSchema,
+} from '../types/schemas';
+import { normalizeCreator, normalizeWallet } from '../utils/normalizers';
+import { DorisioClient } from '../client';
+import { RequestOptions } from '../http/http-client';
+
+export interface VerificationStatus {
+  verified: boolean;
+  verifiedAt?: string;
+  expiresAt?: string;
+}
+
+/**
+ * Verify creator identity (requires proof/admin approval)
+ * POST /creators/:creatorId/verify
+ *
+ * @param creatorId - Unique creator identifier (UUID)
+ * @param options - Optional request options including custom HTTP headers
+ * @returns Verified Creator record
+ *
+ * @throws {Error} If creator verification fails
+ *
+ * @example
+ * ```ts
+ * const creator = await client.verifyCreator('creator-123', {
+ *   headers: { 'X-Admin-Token': 'admin-secret' },
+ * });
+ * console.log('Creator verified:', creator.verified);
+ * ```
+ */
+export async function verifyCreator(
+  this: DorisioClient,
+  creatorId: string,
+  options?: Partial<RequestOptions>
+): Promise<Creator> {
+  const response = options
+    ? await this.request('POST', `/creators/${creatorId}/verify`, undefined, options)
+    : await this.request('POST', `/creators/${creatorId}/verify`);
+
+  if (!response.success || !response.data) {
+    throw new Error(`Failed to verify creator: ${creatorId}`);
+  }
+
+  return normalizeCreator(response.data);
+}
+
+/**
+ * Request creator verification (submits for review)
+ * POST /creators/:creatorId/request-verification
+ *
+ * @param creatorId - Unique creator identifier (UUID)
+ * @param data - Verification application payload
+ * @param data.documentType - Type of verification document
+ * @param data.documentUrl - Optional URL to document upload
+ * @param data.description - Optional description or notes
+ * @param options - Optional request options including custom HTTP headers
+ * @returns VerificationStatus with pending/submitted review details
+ *
+ * @throws {Error} If request fails
+ *
+ * @example
+ * ```ts
+ * const status = await client.requestCreatorVerification('creator-123', {
+ *   documentType: 'passport',
+ *   documentUrl: 'https://storage.example.com/docs/passport.pdf',
+ *   description: 'Passport verification submission',
+ * });
+ * console.log('Verification submitted:', status.verified);
+ * ```
+ */
+export async function requestCreatorVerification(
+  this: DorisioClient,
+  creatorId: string,
+  data: {
+    documentType: string;
+    documentUrl?: string;
+    description?: string;
+  },
+  options?: Partial<RequestOptions>
+): Promise<VerificationStatus> {
+  const response = options
+    ? await this.request(
+        'POST',
+        `/creators/${creatorId}/request-verification`,
+        data,
+        options
+      )
+    : await this.request(
+        'POST',
+        `/creators/${creatorId}/request-verification`,
+        data
+      );
+
+  if (!response.success || !response.data) {
+    throw new Error(`Failed to request verification for creator: ${creatorId}`);
+  }
+
+  const parsed = ApiVerificationStatusSchema.parse(response.data);
+  return {
+    verified: parsed.verified,
+    verifiedAt: parsed.verifiedAt,
+    expiresAt: parsed.expiresAt,
+  };
+}
+
+/**
+ * Get creator verification status
+ * GET /creators/:creatorId/verification-status
+ *
+ * @param creatorId - Unique creator identifier (UUID)
+ * @param options - Optional request options including custom HTTP headers
+ * @returns Verification status and status state string
+ *
+ * @throws {Error} If request fails
+ *
+ * @example
+ * ```ts
+ * const status = await client.getCreatorVerificationStatus('creator-123');
+ * console.log(`Creator status: ${status.status}, isVerified: ${status.verified}`);
+ * ```
+ */
+export async function getCreatorVerificationStatus(
+  this: DorisioClient,
+  creatorId: string,
+  options?: Partial<RequestOptions>
+): Promise<VerificationStatus & { status: string }> {
+  const response = options
+    ? await this.request(
+        'GET',
+        `/creators/${creatorId}/verification-status`,
+        undefined,
+        options
+      )
+    : await this.request(
+        'GET',
+        `/creators/${creatorId}/verification-status`
+      );
+
+  if (!response.success || !response.data) {
+    throw new Error(`Failed to fetch verification status for creator: ${creatorId}`);
+  }
+
+  const parsed = ApiVerificationStatusSchema.parse(response.data);
+  return {
+    verified: parsed.verified,
+    verifiedAt: parsed.verifiedAt,
+    expiresAt: parsed.expiresAt,
+    status: parsed.status ?? 'unverified',
+  };
+}
+
+/**
+ * Verify wallet ownership (challenge/response)
+ * POST /wallets/:walletId/verify
+ *
+ * @param walletId - Unique wallet identifier (UUID)
+ * @param proof - Cryptographic signature proof
+ * @param options - Optional request options including custom HTTP headers
+ * @returns Verified Wallet record
+ *
+ * @throws {Error} If verification proof is invalid
+ *
+ * @example
+ * ```ts
+ * const wallet = await client.verifyWallet('wallet-123', 'signed-challenge-proof');
+ * console.log('Wallet verified successfully:', wallet.isVerified);
+ * ```
+ */
+export async function verifyWallet(
+  this: DorisioClient,
+  walletId: string,
+  proof?: string,
+  options?: Partial<RequestOptions>
+): Promise<Wallet> {
+  const body = proof !== undefined ? { proof } : undefined;
+  const response = options
+    ? await this.request(
+        'POST',
+        `/wallets/${walletId}/verify`,
+        body,
+        options
+      )
+    : (body !== undefined
+        ? await this.request('POST', `/wallets/${walletId}/verify`, body)
+        : await this.request('POST', `/wallets/${walletId}/verify`));
+
+  if (!response.success || !response.data) {
+    throw new Error(`Failed to verify wallet: ${walletId}`);
+  }
+
+  return normalizeWallet(response.data);
+}
+
+/**
+ * Get wallet verification status
+ * GET /wallets/:walletId/verification-status
+ *
+ * @param walletId - Unique wallet identifier (UUID)
+ * @param options - Optional request options including custom HTTP headers
+ * @returns Current verification state of the wallet
+ *
+ * @throws {Error} If request fails
+ *
+ * @example
+ * ```ts
+ * const status = await client.getWalletVerificationStatus('wallet-123');
+ * console.log('Wallet is verified:', status.verified);
+ * ```
+ */
+export async function getWalletVerificationStatus(
+  this: DorisioClient,
+  walletId: string,
+  options?: Partial<RequestOptions>
+): Promise<VerificationStatus> {
+  const response = options
+    ? await this.request(
+        'GET',
+        `/wallets/${walletId}/verification-status`,
+        undefined,
+        options
+      )
+    : await this.request(
+        'GET',
+        `/wallets/${walletId}/verification-status`
+      );
+
+  if (!response.success || !response.data) {
+    throw new Error(`Failed to fetch verification status for wallet: ${walletId}`);
+  }
+
+  const parsed = ApiVerificationStatusSchema.parse(response.data);
+  return {
+    verified: parsed.verified,
+    verifiedAt: parsed.verifiedAt,
+    expiresAt: parsed.expiresAt,
+  };
+}
+
+/**
+ * Request wallet verification challenge
+ * POST /wallets/:walletId/verification-challenge
+ *
+ * @param walletId - Unique wallet identifier (UUID)
+ * @param options - Optional request options including custom HTTP headers
+ * @returns Challenge string and expiration duration in seconds
+ *
+ * @throws {Error} If challenge request fails
+ *
+ * @example
+ * ```ts
+ * const { challenge, expiresIn } = await client.requestWalletVerificationChallenge('wallet-123');
+ * console.log(`Sign challenge "${challenge}" within ${expiresIn}s`);
+ * ```
+ */
+export async function requestWalletVerificationChallenge(
+  this: DorisioClient,
+  walletId: string,
+  options?: Partial<RequestOptions>
+): Promise<{ challenge: string; expiresIn: number }> {
+  const response = options
+    ? await this.request(
+        'POST',
+        `/wallets/${walletId}/verification-challenge`,
+        undefined,
+        options
+      )
+    : await this.request(
+        'POST',
+        `/wallets/${walletId}/verification-challenge`
+      );
+
+  if (!response.success || !response.data) {
+    throw new Error(`Failed to request verification challenge for wallet: ${walletId}`);
+  }
+
+  const parsed = ApiWalletChallengeSchema.parse(response.data);
+  return {
+    challenge: parsed.challenge,
+    expiresIn: parsed.expiresIn,
+  };
+}
+
+/**
+ * Check if transaction requires verification
+ * GET /transactions/:transactionId/verified
+ *
+ * @param transactionId - Unique transaction identifier (UUID)
+ * @param options - Optional request options including custom HTTP headers
+ * @returns True if transaction is verified
+ *
+ * @throws {Error} If request fails
+ *
+ * @example
+ * ```ts
+ * const isVerified = await client.isTransactionVerified('tx-123');
+ * console.log('Transaction verified:', isVerified);
+ * ```
+ */
+export async function isTransactionVerified(
+  this: DorisioClient,
+  transactionId: string,
+  options?: Partial<RequestOptions>
+): Promise<boolean> {
+  const response = options
+    ? await this.request(
+        'GET',
+        `/transactions/${transactionId}/verified`,
+        undefined,
+        options
+      )
+    : await this.request(
+        'GET',
+        `/transactions/${transactionId}/verified`
+      );
+
+  if (!response.success || response.data === undefined) {
+    throw new Error(`Failed to check verification status for transaction: ${transactionId}`);
+  }
+
+  return Boolean(response.data);
+}
