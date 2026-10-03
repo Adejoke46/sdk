@@ -482,6 +482,44 @@ transactions.forEach((tx) => {
 
 ## Configuration
 
+### Request and response schemas
+
+Pass Zod or Joi schemas to validate each request body before it is sent and each
+decoded response before it is returned. The schema's parsed value is used, so
+coercion and other transformations reach the API and the caller. Joi is optional;
+install it in your application if you use Joi schemas.
+
+```typescript
+import { z } from 'zod';
+import { DorisioClient, SchemaValidationError } from 'dorisio-sdk';
+
+const client = new DorisioClient({
+  baseUrl: 'https://api.dorisio.com',
+  schemas: {
+    request: z.object({ amount: z.coerce.number().positive() }),
+    response: z.object({ success: z.boolean(), data: z.unknown() }),
+  },
+});
+
+try {
+  const result = await client.getHttpClient().request('/tips', {
+    method: 'POST',
+    body: { amount: '10' },
+  });
+  console.log(result);
+} catch (error) {
+  if (error instanceof SchemaValidationError) {
+    console.error(error.phase, error.issues); // e.g. [{ path: 'amount', message: '...' }]
+  }
+}
+```
+
+You can also pass `schemas` in an individual `HttpClient.request` call to
+override the client defaults. Request validation applies to bodies, including
+missing bodies on POST, PUT, and PATCH. GET and DELETE calls without bodies
+skip request validation; response validation still runs. With no schemas,
+requests use the existing path without parsing or conversion.
+
 ```typescript
 const client = new DorisioClient({
   baseURL: 'https://api.dorisio.com',

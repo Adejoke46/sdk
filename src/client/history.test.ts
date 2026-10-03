@@ -20,7 +20,10 @@ describe('History Methods', () => {
     client.getFullTransactionHistory = HistoryMethods.getFullTransactionHistory.bind(client);
     client.getTransactionStats = HistoryMethods.getTransactionStats.bind(client);
     client.getCreatorEarnings = HistoryMethods.getCreatorEarnings.bind(client);
-    client.exportTransactionHistory = HistoryMethods.exportTransactionHistory.bind(client);
+    // `bind` collapses the method's overloads; restore them for the fake client.
+    client.exportTransactionHistory = HistoryMethods.exportTransactionHistory.bind(
+      client
+    ) as unknown as DorisioClient['exportTransactionHistory'];
 
     mockRequest.mockClear();
   });
