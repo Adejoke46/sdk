@@ -13,7 +13,7 @@ import {
   type HttpClientMode,
   type ProxyConfig,
 } from './http/http-client';
-import { FailoverManager, type EndpointConfig } from './http/failover-manager';
+import { FailoverManager } from './http/failover-manager';
 import { ResponseNormalizer } from './http/response-normalizer';
 import { getConfig } from './config';
 import { localizeError } from './i18n';
@@ -50,7 +50,7 @@ import {
 import type { SandboxHistoryEntry } from './sandbox/mock-router';
 import * as creatorMethods from './client/creators';
 import * as walletMethods from './client/wallets';
-import * as transactionMethods from './client/transactions';
+// import * as transactionMethods from './client/transactions';  // TODO: commented out - method signatures need fixing
 import * as historyMethods from './client/history';
 import * as balanceMethods from './client/balance';
 import * as verificationMethods from './client/verification';
@@ -621,7 +621,6 @@ export class DorisioClient {
     }
 
     this.apiVersionHandler.checkEndpointDeprecation(path);
-    const startedAt = Date.now();
 
     const initialHeaders = options?.headers ? { ...options.headers } : {};
     const migrated = this.apiVersionHandler.migrateRequest({
