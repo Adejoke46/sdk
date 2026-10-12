@@ -20,7 +20,7 @@ export {
   type GraphQLRequestOptions,
   type GraphQLResponse,
   type GraphQLErrorItem,
-  type GraphQMErrorLocation,
+  type GraphQLErrorLocation,
   type GraphQLCacheOptions,
   type CacheEntry,
 } from './graphql/graphql-client';
@@ -59,22 +59,26 @@ export type {
   ErrorInterceptor,
 } from './types/interceptors';
 export type { RequestOptions, HttpClientOptions, HttpClientMode } from './http/http-client';
-export type { StreamedResponse } from './http/http-client';
 export { HttpClient } from './http/http-client';
 export { validateSchema } from './validation/schema-validator';
 export { SchemaValidationError } from './types/validation';
-export type { ValidationSchema, ValidationSchemas, SchemaValidationIssue } from './types/validation';
+export type {
+  ValidationSchema,
+  ValidationSchemas,
+  SchemaValidationIssue,
+} from './types/validation';
 export { CacheManager } from './cache/cache-manager';
 export type { CacheOptions, CacheStats, CacheStrategy } from './types/cache';
 export { RequestQueue, type RequestQueueOptions } from './http/request-queue';
-export {
-  PriorityRequestQueue,
-  type PriorityRequestQueueOptions,
-} from './queue/request-queue';
+export { PriorityRequestQueue, type PriorityRequestQueueOptions } from './queue/request-queue';
 export type { QueueConfig, QueueStats, RequestPriority } from './types/queue';
 export { Batcher, type BatchExecuteOptions, type BatchOperationResult } from './utils/batch';
 export { RequestSigner, type RequestSignerOptions } from './http/request-signer';
-export { ConnectionPool, type ConnectionPoolOptions, type ConnectionPoolStats } from './http/connection-pool';
+export {
+  ConnectionPool,
+  type ConnectionPoolOptions,
+  type ConnectionPoolStats,
+} from './http/connection-pool';
 export {
   OfflineQueue,
   type OfflineQueueOptions,
@@ -116,10 +120,7 @@ export {
   type EndpointConfig,
   type FailoverManagerOptions,
 } from './http/failover-manager';
-export {
-  JsonSerializer,
-  type Serializer,
-} from './http/serializer';
+export { JsonSerializer, type Serializer } from './http/serializer';
 export {
   MetricsCollector,
   type MetricsCollectorOptions,
@@ -178,7 +179,7 @@ export {
 // Re-export circuit breaker
 export {
   CircuitBreaker,
-  CircuitBreakerOpenError,
+  CircuitOpenError,
   type CircuitBreakerOptions,
   type CircuitState,
   type CircuitBreakerStats,

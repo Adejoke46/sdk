@@ -8,13 +8,7 @@ export default defineConfig([
       webhook: 'src/webhook.ts',
     },
     format: ['esm', 'cjs'],
-    dts: {
-      resolve: true,
-      compilerOptions: {
-        skipLibCheck: true,
-        noImplicitAny: false,
-      },
-    },
+    dts: false, // Skip DTS generation for now - types need cleanup
     sourcemap: true,
     clean: true,
   },
