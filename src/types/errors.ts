@@ -8,13 +8,26 @@ export class DorisioError extends Error {
   public readonly code?: string;
   public requestId?: string;
   public i18n?: ErrorI18nMetadata;
+  /**
+   * Whether the failed operation can safely be attempted again.
+   * Defaults to `false`. Transient failures such as `RateLimitError` and
+   * `NetworkError` set it to `true`.
+   */
+  public readonly retryable: boolean;
 
-  constructor(message: string, statusCode?: number, code?: string, requestId?: string) {
+  constructor(
+    message: string,
+    statusCode?: number,
+    code?: string,
+    requestId?: string,
+    retryable = false
+  ) {
     super(message);
     this.name = this.constructor.name;
     this.statusCode = statusCode;
     this.code = code;
     this.requestId = requestId;
+    this.retryable = retryable;
     Error.captureStackTrace(this, this.constructor);
   }
 }
@@ -87,7 +100,7 @@ export class RateLimitError extends DorisioError {
   public readonly retryAfter?: number;
 
   constructor(message: string, retryAfter?: number, requestId?: string) {
-    super(message, 429, 'RATE_LIMITED', requestId);
+    super(message, 429, 'RATE_LIMITED', requestId, true);
     this.name = 'RateLimitError';
     this.retryAfter = retryAfter;
   }
@@ -222,7 +235,7 @@ export class NotFoundError extends DorisioError {
 
 export class NetworkError extends DorisioError {
   constructor(message: string = 'Network error', requestId?: string) {
-    super(message, 0, 'NETWORK_ERROR', requestId);
+    super(message, 0, 'NETWORK_ERROR', requestId, true);
     this.name = 'NetworkError';
   }
 }
