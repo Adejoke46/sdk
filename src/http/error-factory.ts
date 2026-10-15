@@ -13,6 +13,7 @@ import {
   NetworkError,
   TimeoutError,
 } from '../types';
+import { isValidationError } from '../lib/errors/type-guards';
 
 export interface ErrorResponse {
   error?: string;
@@ -75,7 +76,7 @@ export class ApiErrorFactory {
    * Normalize any error to ApiError or Error
    */
   static normalize(error: unknown): ApiError | Error {
-    if (error instanceof ApiError || error instanceof ValidationError) {
+    if (error instanceof ApiError || isValidationError(error)) {
       return error;
     }
 
@@ -96,7 +97,7 @@ export class ApiErrorFactory {
       return `[${normalized.code}] (${normalized.statusCode}) ${normalized.message}`;
     }
 
-    if (normalized instanceof ValidationError) {
+    if (isValidationError(normalized)) {
       const details = normalized.details ? ` - ${JSON.stringify(normalized.details)}` : '';
       return `${normalized.message}${details}`;
     }

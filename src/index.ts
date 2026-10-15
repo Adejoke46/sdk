@@ -248,6 +248,13 @@ export type {
 
 // Re-export utils
 export { ApiErrorHandler, RequestValidator } from './utils';
+export {
+  isAuthError,
+  isPaymentError,
+  isValidationError,
+  isRateLimitError,
+  isNetworkError,
+} from './lib/errors/type-guards';
 
 // Re-export idempotency manager
 export {
