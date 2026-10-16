@@ -690,6 +690,21 @@ See **[docs/ERROR_HANDLING.md](./docs/ERROR_HANDLING.md)** for the full guide, i
 | `NetworkError` | 0 | `NETWORK_ERROR` | — |
 | `NotFoundError` | 404 | `NOT_FOUND` | — |
 
+### Rate-limit retries
+
+For idempotent requests, HTTP 429 responses retry within the configured attempt budget.
+`Retry-After` accepts delta-seconds or an HTTP date and controls the wait without jitter.
+`X-RateLimit-Reset` accepts a Unix timestamp in seconds or an HTTP date as a fallback.
+`RateLimitError.retryAfter` exposes the wait in seconds. `RateLimitError.rateLimit` stores the parsed
+`limit`, `remaining`, and `reset` values. `reset` is a Unix timestamp in seconds.
+
+Without a valid server delay, 429 retries use the configured exponential backoff,
+capped at 30 seconds by default. `HttpClient` uses `retryBaseDelayMs`, `retryMaxDelayMs`,
+and `retryJitter`. Jitter adds 0 to 100 milliseconds and is disabled by default for
+`HttpClient` and enabled by default for `RetryManager`.
+Server delays can exceed that cap. Explicit error-handler delays, throw decisions,
+and fallback values take precedence.
+
 ### Error recovery examples
 
 #### Catch and recover from common errors
