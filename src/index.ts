@@ -91,6 +91,14 @@ export {
   type ConnectionPoolStats,
 } from './http/connection-pool';
 export {
+  SocketManager,
+  type SocketManagerOptions,
+  type SocketManagerStats,
+  type SocketEntry,
+  type SocketState,
+  type SocketLike,
+} from './http/socket-manager';
+export {
   OfflineQueue,
   type OfflineQueueOptions,
   type OfflineEventType,
