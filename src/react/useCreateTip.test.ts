@@ -126,7 +126,7 @@ describe('useCreateTip Hook', () => {
         submitTransaction: async (tipId: string, envelope: string) => {
           try {
             return await mockClient.submitPaymentTransaction(tipId, {
-              transactionEnvelope: envelope,
+              envelope,
             });
           } catch (err) {
             throw err;

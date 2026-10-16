@@ -210,7 +210,7 @@ export function useCreateTip(): UseCreateTipState & UseCreateTipActions {
               const result = await client.submitPaymentTransaction(
                 tipId,
                 {
-                  transactionEnvelope: envelope,
+                  envelope,
                 },
                 { signal }
               );

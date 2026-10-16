@@ -1,6 +1,6 @@
 /**
  * Schema exports for consumer validation
- * 
+ *
  * Re-exports Zod schemas from the validation utility layer.
  * These are the canonical schema definitions used throughout the SDK.
  */
@@ -76,7 +76,12 @@ export type ApiSession = unknown;
 export type ApiSessionExpiry = unknown;
 export type ApiBalanceInfo = unknown;
 export type ApiAccountBalance = unknown;
-export type ApiCreatorEarnings = unknown;
+export type ApiCreatorEarnings = {
+  totalEarnings: number;
+  pendingBalance: number;
+  confirmedBalance: number;
+  transactionCount: number;
+};
 export type ApiCreatorPendingPayout = unknown;
 export type ApiAccountSummary = unknown;
 export type ApiVerificationStatus = unknown;
@@ -94,7 +99,12 @@ export const ApiSessionSchema = z.object({});
 export const ApiSessionExpirySchema = z.object({});
 export const ApiBalanceInfoSchema = z.object({});
 export const ApiAccountBalanceSchema = z.object({});
-export const ApiCreatorEarningsSchema = z.object({});
+export const ApiCreatorEarningsSchema = z.object({
+  totalEarnings: z.number(),
+  pendingBalance: z.number(),
+  confirmedBalance: z.number(),
+  transactionCount: z.number(),
+});
 export const ApiCreatorPendingPayoutSchema = z.object({});
 export const ApiAccountSummarySchema = z.object({});
 export const ApiVerificationStatusSchema = z.object({});

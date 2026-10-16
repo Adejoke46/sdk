@@ -8,9 +8,10 @@ export default defineConfig([
       webhook: 'src/webhook.ts',
     },
     format: ['esm', 'cjs'],
-    dts: false, // Skip DTS generation for now - types need cleanup
+    dts: false,
     sourcemap: true,
     clean: true,
+    external: ['better-sqlite3'],
   },
   {
     entry: {
@@ -24,5 +25,6 @@ export default defineConfig([
       js: '#!/usr/bin/env node',
     },
     shims: true,
+    external: ['better-sqlite3'],
   },
 ]);
