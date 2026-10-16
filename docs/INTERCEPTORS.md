@@ -65,6 +65,9 @@ interceptors.addErrorInterceptor((error) => {
 | `executeRequestInterceptors` | `(options: RequestOptions) => Promise<RequestOptions>` | Runs all request interceptors. |
 | `executeResponseInterceptors` | `<T>(response: T) => Promise<T>` | Runs all response interceptors. |
 | `executeErrorInterceptors` | `(error: unknown) => Promise<unknown>` | Runs all error interceptors. |
+| `removeRequestInterceptor` | `(id: InterceptorId) => boolean` | Removes a request interceptor by id. |
+| `removeResponseInterceptor` | `(id: InterceptorId) => boolean` | Removes a response interceptor by id. |
+| `removeErrorInterceptor` | `(id: InterceptorId) => boolean` | Removes an error interceptor by id. |
 
 ```typescript
 export type RequestInterceptor = (
@@ -105,12 +108,78 @@ awaited before the next one starts.
 
 ```
 request() ──▶ request interceptors ──▶ fetch / sandbox mock
-                                             │
-                        ┌──────── success ──┴── failure ─────────┐
-                        ▼                                        ▼
-              response interceptors                      error interceptors
-                (return value = payload)                 (observation only)
+                                              │
+                         ┌──────── success ──┴── failure ─────────┐
+                         ▼                                        ▼
+               response interceptors                      error interceptors
+                 (return value = payload)                 (observation only)
 ```
+
+### Worked example: execution order
+
+Interceptors run sequentially per phase, and each async interceptor is awaited
+before the next one starts:
+
+```typescript
+import { DorisioClient } from 'dorisio-sdk';
+
+const client = new DorisioClient({ baseUrl: 'https://api.dorisio.com', token: 'token' });
+const interceptors = client.getHttpClient().getInterceptors();
+const order: string[] = [];
+
+interceptors.addRequestInterceptor(async (options) => {
+  order.push('request-1');
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  return options;
+});
+interceptors.addRequestInterceptor((options) => {
+  order.push('request-2');
+  return options;
+});
+interceptors.addResponseInterceptor(async (response) => {
+  order.push('response-1');
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  return response;
+});
+interceptors.addResponseInterceptor((response) => {
+  order.push('response-2');
+  return response;
+});
+
+await client.payments.create({ amount: 1000 });
+
+console.log(order);
+// ['request-1', 'request-2', 'response-1', 'response-2']
+```
+
+**Ordering guarantees**
+
+- All request interceptors run before the request is sent, in registration order.
+- All response interceptors run after a successful response, in registration order,
+  before the payload is returned to the caller.
+- Within a phase, order is strictly FIFO: lower ids (added earlier) run first.
+
+**Removal and reordering**
+
+Each `add*Interceptor` returns an `InterceptorId`. Use it to remove an
+interceptor:
+
+```typescript
+const id = interceptors.addRequestInterceptor((options) => options);
+interceptors.removeRequestInterceptor(id); // true
+interceptors.removeRequestInterceptor(id); // false — already removed
+```
+
+There is no arbitrary reorder API. To change an interceptor's position, remove
+it and re-add it — it then runs last in its phase:
+
+```typescript
+const id = interceptors.addRequestInterceptor((options) => options); // runs first
+interceptors.addRequestInterceptor((options) => options);            // runs second
+interceptors.removeRequestInterceptor(id);
+interceptors.addRequestInterceptor((options) => options);            // now runs last
+```
+
 
 ### Error handling
 
