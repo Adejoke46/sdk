@@ -6,6 +6,7 @@ export default defineConfig([
       index: 'src/index.ts',
       'react/index': 'src/react/index.ts',
       webhook: 'src/webhook.ts',
+      'offline/sqlite': 'src/offline/sqlite.ts',
     },
     format: ['esm', 'cjs'],
     dts: false,

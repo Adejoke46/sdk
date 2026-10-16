@@ -89,12 +89,7 @@ export {
 
 // Re-export offline-first storage and sync (Issue #129)
 export { OfflineManager } from './offline/sync';
-export {
-  MemoryStorage,
-  IndexedDBStorage,
-  SQLiteStorage,
-  createStorageBackend,
-} from './offline/storage';
+export { MemoryStorage, IndexedDBStorage, createStorageBackend } from './offline/storage';
 export type {
   OfflineConfig,
   StorageBackendType,

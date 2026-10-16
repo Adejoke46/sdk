@@ -25,6 +25,10 @@
     "./webhook": {
       "import": "./dist/webhook.js",
       "types": "./dist/webhook.d.ts"
+    },
+    "./offline/sqlite": {
+      "import": "./dist/offline/sqlite.js",
+      "types": "./dist/offline/sqlite.d.ts"
     }
   },
   "scripts": {
@@ -35,7 +39,8 @@
     "format": "prettier --write src",
     "test": "vitest run",
     "test:watch": "vitest",
-    "docs": "typedoc", "docs:build": "npm run docs && echo docs:build", 
+    "docs": "typedoc",
+    "docs:build": "npm run docs && echo docs:build",
     "docs:watch": "typedoc --watch",
     "storybook": "storybook build -o docs/storybook-static"
   },
