@@ -5,6 +5,17 @@
  * Provides type-safe API client and utilities for integrating Dorisio payments.
  */
 
+// Re-export DNS failover utilities
+export {
+  DnsFailoverManager,
+  DnsFailoverError,
+  isDnsError,
+  isTransientNetworkError,
+  DEFAULT_DNS_CACHE_TTL_MS,
+  type DnsFailoverOptions,
+  type DnsResolveResult,
+} from './http/dns-failover';
+
 export const SDK_VERSION = '0.1.0';
 
 // Re-export client and utilities
@@ -20,7 +31,7 @@ export {
   type GraphQLRequestOptions,
   type GraphQLResponse,
   type GraphQLErrorItem,
-  type GraphQLErrorLocation,
+  type GraphQLerrorLocation,
   type GraphQLCacheOptions,
   type CacheEntry,
 } from './graphql/graphql-client';
