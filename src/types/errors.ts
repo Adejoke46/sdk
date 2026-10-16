@@ -239,3 +239,13 @@ export class NetworkError extends DorisioError {
     this.name = 'NetworkError';
   }
 }
+
+/**
+ * Server error (5xx responses)
+ */
+export class ServerError extends DorisioError {
+  constructor(message: string = 'Server error', statusCode = 500, requestId?: string) {
+    super(message, statusCode, 'SERVER_ERROR', requestId, true);
+    this.name = 'ServerError';
+  }
+}

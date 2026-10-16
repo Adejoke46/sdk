@@ -38,6 +38,7 @@ import { getTracingProvider, SpanStatus } from '../lib/telemetry';
 import { validateSchema } from '../validation/schema-validator';
 import type { ValidationSchemas } from '../types/validation';
 import { prepareRequestBody, type RequestCompressionConfig } from './compress';
+import { createHttpError } from './error-factory';
 
 export type HttpClientMode = 'live' | 'sandbox' | 'production';
 
@@ -896,7 +897,6 @@ export class HttpClient {
               // ignore
             }
           }
-          const retryAfterHeader = response.headers?.get?.('Retry-After');
           let retryAfter: number | undefined;
           if (retryAfterHeader) {
             const parsedSeconds = Number(retryAfterHeader);
@@ -909,14 +909,13 @@ export class HttpClient {
               }
             }
           }
-          const errorCode = typeof error.code === 'string' ? error.code : undefined;
-          throw new ApiError(
-            String(error.error) || 'Request failed',
-            response.status,
-            errorCode,
+          throw createHttpError({
+            status: response.status,
+            body: error,
+            requestId: options.requestId,
+            headers: response.headers,
             retryAfter,
-            options.requestId
-          );
+          });
         }
 
         let data: T;
@@ -1221,14 +1220,12 @@ export class HttpClient {
       } catch {
         // ignore body parse failures — status is the primary signal
       }
-      const errorCode = typeof error.code === 'string' ? error.code : undefined;
-      throw new ApiError(
-        String(error.error) || `Streaming request failed with status ${response.status}`,
-        response.status,
-        errorCode,
-        undefined,
-        requestId
-      );
+      throw createHttpError({
+        status: response.status,
+        body: error,
+        requestId,
+        headers: response.headers,
+      });
     }
 
     const body = response.body;
@@ -1361,11 +1358,12 @@ export class HttpClient {
 
       // Check if response is ok
       if (!response.ok) {
-        throw new ApiError(
-          `HTTP ${response.status}: ${response.statusText}`,
-          response.status,
-          await response.text()
-        );
+        throw createHttpError({
+          status: response.status,
+          body: await response.text(),
+          requestId: options.requestId,
+          headers: response.headers,
+        });
       }
 
       // Determine if we should use streaming based on response size
