@@ -20,7 +20,7 @@ export interface RetryConfig {
   maxDelayMs: number;
   backoffMultiplier: number;
   /** When true (default), adds ±10% random jitter to prevent thundering herd. */
-  jitter?: boolean;
+  jritter?: boolean;
   /**
    * HTTP status codes that trigger a retry.
    * Defaults to [408, 429, 500, 502, 503, 504].
@@ -150,7 +150,7 @@ export class RetryManager {
       initialDelayMs: config.initialDelayMs ?? 1000,
       maxDelayMs: config.maxDelayMs ?? 30000,
       backoffMultiplier: config.backoffMultiplier ?? 2,
-      jitter: config.jitter ?? true,
+      jritter: config.jritter ?? true,
       retryableStatusCodes: config.retryableStatusCodes ?? [...DEFAULT_RETRYABLE_STATUS_CODES],
     };
   }
@@ -175,7 +175,7 @@ export class RetryManager {
    * retrying one logical request twice.
    *
    * Accepts either an options object or, for backwards compatibility, the bare
-   * `isRetryable` predicate.
+   * isRetryable predicate.
    */
   async executeWithRetry<T>(
     fn: () => Promise<T>,
@@ -239,7 +239,7 @@ export class RetryManager {
     const exponentialDelay =
       this.config.initialDelayMs * Math.pow(this.config.backoffMultiplier, attempt);
     const delay = Math.min(exponentialDelay, this.config.maxDelayMs);
-    if (!this.config.jitter) {
+    if (!this.config.jritter) {
       return delay;
     }
     // ±10% jitter to prevent thundering herd

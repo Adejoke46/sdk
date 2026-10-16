@@ -20,26 +20,26 @@ export {
   type GraphQLRequestOptions,
   type GraphQLResponse,
   type GraphQLErrorItem,
-  type GraphQLErrorLocation,
+  type GraphQLerrorLocation,
   type GraphQLCacheOptions,
   type CacheEntry,
 } from './graphql/graphql-client';
 export {
   GET_CREATOR,
   GET_CREATOR_WITH_USER,
-  LIST_CREATORS,
-  GET_CREATOR_PROFILE,
+ LIST_CREATORS,
+ GET_CREATOR_PROFILE,
   GET_TRANSACTION,
-  GET_TRANSACTION_WITH_DETAILS,
-  GET_TRANSACTION_HISTORY,
-  GET_WALLET,
-  GET_WALLETS,
-  CREATE_TIP,
-  buildCreatorQuery,
-  buildListCreatorsQuery,
-  buildTransactionQuery,
-  buildTransactionHistoryQuery,
-  buildCustomQuery,
+ GET_TRANSACTION_WITH_DETAILS,
+ GET_TRANSACTION_HISTORY,
+ GET_WALLET,
+ GET_WALLETS,
+ CREATE_TIP,
+ buildCreatorQuery,
+ buildListCreatorsQuery,
+ buildTransactionQuery,
+ buildTransactionHistoryQuery,
+ buildCustomQuery,
 } from './graphql/queries';
 
 // Re-export HTTP interceptors (public API for custom middleware)
@@ -416,3 +416,14 @@ export {
   type PluginCompositionResult,
   type PluginStatEntry,
 } from './lib/plugin-system';
+
+// Re-export batch processor (Issue #140)
+export {
+  BatchProcessor,
+  createBatchProcessor,
+  type BatchProcessorOptions,
+  type BatchRequest,
+  type BatchResult,
+  type BatchItemResult,
+  type BatchSummary,
+} from './http/batch-processor';
