@@ -37,7 +37,7 @@ import {
 import { getTracingProvider, SpanStatus } from '../lib/telemetry';
 import { validateSchema } from '../validation/schema-validator';
 import type { ValidationSchemas } from '../types/validation';
-import { prepareRequestBody, type RequestCompressionConfig } from './compress';
+import { prepareRequestBody, decompressResponseBody, type RequestCompressionConfig } from './compress';
 import { createHttpError } from './error-factory';
 
 export type HttpClientMode = 'live' | 'sandbox' | 'production';
@@ -811,6 +811,10 @@ export class HttpClient {
     const url = `${this.baseUrl}${path}`;
     let headers = { ...this.defaultHeaders, ...options.headers };
     const serializedBody = options.body ? this.serializer.serialize(options.body) : undefined;
+
+    if (this.compression?.enabled !== false && !hasHeader(headers, 'accept-encoding')) {
+      headers['Accept-Encoding'] = 'gzip, br';
+    }
     let requestBody: BodyInit | undefined;
     if (serializedBody !== undefined) {
       const preparedBody = await prepareRequestBody(serializedBody, headers, this.compression);
@@ -883,12 +887,13 @@ export class HttpClient {
         if (!response.ok) {
           let error: Record<string, unknown> = {};
           try {
-            const errorText = await response.text();
+            const buffer = await response.arrayBuffer();
+            const encoding = response.headers.get('content-encoding') ?? '';
+            const errorText = await decompressResponseBody(buffer, encoding);
             error = errorText
               ? this.serializer.deserialize<Record<string, unknown>>(errorText)
               : {};
           } catch {
-            // Fallback for mocks that only implement json()
             try {
               error =
                 (await (response as { json?: () => Promise<Record<string, unknown>> }).json?.()) ??
@@ -920,11 +925,23 @@ export class HttpClient {
 
         let data: T;
         try {
-          const text = await response.text();
+          const buffer = await response.arrayBuffer();
+          const encoding = response.headers.get('content-encoding') ?? '';
+          const text = await decompressResponseBody(buffer, encoding);
           data = this.serializer.deserialize<T>(text);
         } catch {
-          // Fallback for mocks that only implement json()
-          data = (await (response as { json?: () => Promise<T> }).json?.()) ?? (undefined as T);
+          // Fallback for mocks that only implement json() / text()
+          const fallback = response as {
+            json?: () => Promise<T>;
+            text?: () => Promise<string>;
+          };
+          if (fallback.json) {
+            data = await fallback.json();
+          } else if (fallback.text) {
+            data = this.serializer.deserialize<T>(await fallback.text());
+          } else {
+            data = undefined as T;
+          }
         }
 
         return data;

@@ -27,7 +27,7 @@ import {
 } from './lib/analytics';
 import { CacheManager } from './cache/cache-manager';
 import type { CacheOptions } from './types/cache';
-import type { RequestCompressionConfig } from './http/compress';
+import type { RequestCompressionConfig, CompressionAlgorithm } from './http/compress';
 import {
   Creator,
   CreatorProfile,
@@ -169,6 +169,12 @@ export interface ClientConfig {
   proxy?: ProxyConfig;
   /** Compress serialized request bodies above the configured threshold (default 1 KiB). */
   compress?: RequestCompressionConfig;
+  /** Enable request/response compression. Defaults to true. */
+  compressionEnabled?: boolean;
+  /** Minimum serialized request/response size in bytes for compression (default 1024). */
+  compressionThreshold?: number;
+  /** Compression format for request bodies ('gzip' | 'brotli', default 'gzip'). */
+  compressionAlgorithm?: CompressionAlgorithm;
   /** Telemetry configuration for usage analytics */
   telemetry?: TelemetryConfig;
   /** Offline-first storage and sync configuration */
@@ -281,7 +287,11 @@ export class DorisioClient {
       throttleMaxRequests: config.throttleMaxRequests,
       throttleWindowMs: config.throttleWindowMs,
       proxy: config.proxy,
-      compress: config.compress,
+      compress: config.compress ?? {
+        enabled: config.compressionEnabled,
+        threshold: config.compressionThreshold,
+        algorithm: config.compressionAlgorithm,
+      },
     };
 
     this.token = config.token;
