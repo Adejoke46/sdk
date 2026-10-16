@@ -51,13 +51,25 @@ export {
   ValidationError,
   RateLimitError,
   QueueFullError,
-  TimeoutError,
-  ApiError,
-  AuthenticationError,
-  AuthorizationError,
-  NotFoundError,
-  NetworkError,
 } from './errors';
+export type {
+  DorisioErrorOptions,
+  AuthErrorOptions,
+  WalletVerificationErrorOptions,
+  PaymentErrorOptions,
+  ValidationErrorOptions,
+  RateLimitErrorOptions,
+  QueueFullErrorOptions,
+} from './errors';
+export {
+  createError,
+  createAuthError,
+  createWalletVerificationError,
+  createPaymentError,
+  createValidationError,
+  createRateLimitError,
+  createQueueFullError,
+} from '../http/error-factory';
 export type {
   ErrorHandler,
   ErrorHandlerAction,
@@ -65,6 +77,7 @@ export type {
   Middleware,
   MiddlewareContext,
 } from './errors';
+export { ApiError } from './errors';
 
 export type {
   BatchResult,

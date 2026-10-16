@@ -60,7 +60,11 @@ import * as batchMethods from './client/batch-operations';
 import { Batcher } from './utils/batch';
 import { GraphQLClient } from './graphql/graphql-client';
 import { BatchProcessorOptions, BatchResult } from './http/batch-processor';
-import { ErrorHandler, Middleware } from './types/errors';
+import {
+  ErrorHandler,
+  Middleware,
+  DorisioError,
+} from './types/errors';
 import type { QueueConfig, QueueStats } from './types/queue';
 import type { PriorityRequestQueue } from './queue/request-queue';
 import { TelemetryClient, type TelemetryConfig } from './telemetry';
@@ -716,7 +720,7 @@ export class DorisioClient {
       });
     }
 
-    let lastError: Error | undefined;
+    let lastError: DorisioError | undefined;
     const endpoints = this.failoverManager.getEndpoints().map((e) => e.url);
 
     for (const endpointUrl of endpoints) {
@@ -740,12 +744,19 @@ export class DorisioClient {
         this.failoverManager.recordSuccess(endpointUrl);
         return result;
       } catch (error) {
-        lastError = error instanceof Error ? error : new Error(String(error));
+        lastError =
+          error instanceof DorisioError
+            ? error
+            : new DorisioError(
+                error instanceof Error ? error.message : String(error),
+                'FAILOVER_ERROR',
+                503
+              );
         this.failoverManager.recordFailure(endpointUrl);
         if (endpointUrl === endpoints[endpoints.length - 1]) break;
       }
     }
-    throw lastError ?? new Error('All endpoints failed');
+    throw lastError ?? new DorisioError('All endpoints failed', 'FAILOVER_ERROR', 503);
   }
 
   /**

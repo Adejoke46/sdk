@@ -20,7 +20,7 @@ export {
   type GraphQLRequestOptions,
   type GraphQLResponse,
   type GraphQLErrorItem,
-  type GraphQLErrorLocation,
+  type GraphQLerrorLocation,
   type GraphQLCacheOptions,
   type CacheEntry,
 } from './graphql/graphql-client';
@@ -198,18 +198,16 @@ export {
 
 // Re-export types
 export type { ApiResponse, PaginationMeta, PaginatedResponse } from './types/api';
+
+// Re-export error classes and typed error handling primitives
 export {
-  ApiError,
-  ValidationError,
-  AuthenticationError,
-  AuthorizationError,
-  NotFoundError,
-  NetworkError,
-  TimeoutError,
+  // Base error class -- all SDK errors inherit from this.
   DorisioError,
+  // Domain error classes from src/types/errors.ts
   AuthError,
   WalletVerificationError,
   PaymentError,
+  ValidationError,
   RateLimitError,
   QueueFullError,
 } from './types/errors';
@@ -220,6 +218,16 @@ export type {
   Middleware,
   MiddlewareContext,
 } from './types/errors';
+
+// Re-export HTTP error factory (HTTP status -> error class mapping)
+export {
+  ApiErrorFactory,
+  type ErrorResponse,
+} from './http/error-factory';
+
+// Re-export error handler utilities
+export { ApiErrorHandler } from './utils/error-handler';
+export { ApiError } from './types/errors';
 
 // Re-export domain models
 export type {
@@ -247,7 +255,7 @@ export type {
 } from './types';
 
 // Re-export utils
-export { ApiErrorHandler, RequestValidator } from './utils';
+export { RequestValidator } from './utils';
 
 // Re-export idempotency manager
 export {
