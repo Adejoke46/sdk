@@ -4,13 +4,8 @@
  * Utilities for handling and normalizing errors.
  */
 
-import {
-  DorisioError,
-  ApiError,
-  ValidationError,
-  NetworkError,
-  TimeoutError,
-} from '../types/errors';
+import { DorisioError, ApiError, NetworkError, TimeoutError } from '../types/errors';
+import { isNetworkError, isValidationError } from '../lib/errors/type-guards';
 
 export class ApiErrorHandler {
   /**
@@ -25,11 +20,11 @@ export class ApiErrorHandler {
       return error;
     }
 
-    if (error instanceof ValidationError) {
+    if (isValidationError(error)) {
       return error;
     }
 
-    if (error instanceof NetworkError) {
+    if (isNetworkError(error)) {
       return error;
     }
 
@@ -62,7 +57,7 @@ export class ApiErrorHandler {
       return error.statusCode >= 500 || error.statusCode === 429;
     }
 
-    if (error instanceof NetworkError) {
+    if (isNetworkError(error)) {
       return true;
     }
 
