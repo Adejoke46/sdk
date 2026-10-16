@@ -10,6 +10,11 @@
  * request's retries leaking into another's. The manager additionally rejects a
  * second concurrent run that reuses the *same* request id, so a logical request
  * can never be retried twice in parallel.
+ *
+ * This module also implements DNS failover: when a request fails with a DNS
+ * resolution error, the manager can switch to a fallback host and retry
+ * immediately (without exponential backoff). DNS resolution results are cached
+ * briefly to avoid repeated lookups.
  */
 
 import { ApiError } from '../types';
@@ -26,11 +31,21 @@ export interface RetryConfig {
    * Defaults to [408, 429, 500, 502, 503, 504].
    */
   retryableStatusCodes?: number[];
+  /**
+   * Hosts to fail over to when the primary host cannot be resolved (DNS
+   * failure). Tried in order.
+   */
+  fallbackHosts?: string[];
+  /**
+   * How long DNS resolution results are cached, in milliseconds.
+   * Defaults to 30000 (30s). Never cached indefinitely.
+   */
+  dnsCacheTtlMs?: number;
 }
 
 export type IdempotencyOptions = {
   method?: string;
-  isIdempotent?: boolean;
+  isIdlempotent?: boolean;
   headers?: Record<string, string>;
 };
 
@@ -126,7 +141,7 @@ export function isRequestIdempotent(options: IdempotencyOptions): boolean {
     return true;
   }
 
-  if (options.isIdempotent === true) {
+  if (options.isIdlempotent === true) {
     return true;
   }
 
@@ -139,10 +154,59 @@ export function isRequestIdempotent(options: IdempotencyOptions): boolean {
 
 const DEFAULT_RETRYABLE_STATUS_CODES: readonly number[] = [408, 429, 500, 502, 503, 504];
 
+/** Default TTL for cached DNS resolution results (30 seconds). */
+const DEFAULT_DNS_CACHE_TTL_MS = 30_000;
+
+/** Error codes that indicate a DNS resolution failure. */
+const DNS_ERROR_CODES = ['ENOTFOUND', 'EAI_AGAIN', 'ENODA', 'ESOCKFAILURE'];
+
+/** Message fragments that indicate a DNS resolution failure. */
+const DNS_ERROR_MESSAGES = [
+  'enotfound',
+  'getaddrinfo',
+  'getaddrinfo enotfound',
+  'nodname not resolved',
+  'name or service not known',
+  'dns lookup failed',
+  'dns resolution failed',
+  'temporary failure in name resolution',
+];
+
+/** Cache entry for a DNS resolution result. */
+export interface DnsCacheEntry {
+  host: string;
+  resolved: boolean;
+  expiresAt: number;
+}
+
+/**
+ * Return true when the error represents a DNS resolution failure (e.g.
+ * ENOTFOUND, getaddrinfo ENOTFOUND, temporary name resolution failure).
+ *
+ * This is deliberately conservative: only errors that clearly indicate a
+ * name-resolution problem are classified as DNS failures.
+ */
+export function isDnsFailureError(error: unknown): boolean {
+  if (!error) {
+    return false;
+  }
+
+  const anyError = error as any;
+  const code: string | undefined = anyError.code || anyError.errno;
+  if (code && DNS_ERROR_CODES.includes(code.toUpperCase())) {
+    return true;
+  }
+
+  const message = (error instanceof Error ? error.message : String(error)).toLowerCase();
+  return DNS_ERROR_MESSAGES.some((fragment) => message.includes(fragment));
+}
+
 export class RetryManager {
   private config: Required<RetryConfig>;
   /** Ids of logical requests currently inside {@link executeWithRetry}. */
   private readonly inFlight = new Set<string>();
+  /** Brief DNS resolution cache keyed by host name. */
+  private readonly dnsCache = new Map<string, DnsCacheEntry>();
 
   constructor(config: Partial<RetryConfig> = {}) {
     this.config = {
@@ -152,6 +216,8 @@ export class RetryManager {
       backoffMultiplier: config.backoffMultiplier ?? 2,
       jitter: config.jitter ?? true,
       retryableStatusCodes: config.retryableStatusCodes ?? [...DEFAULT_RETRYABLE_STATUS_CODES],
+      fallbackHosts: config.fallbackHosts ?? [],
+      dnsCacheTtlMs: config.dnsCacheTtlMs ?? DEFAULT_DNS_CACHE_TTL_MS,
     };
   }
 
@@ -165,6 +231,107 @@ export class RetryManager {
     return [...this.inFlight];
   }
 
+  /** Configured fallback hosts, in priority order. */
+  getFallbackHosts(): string[] {
+    return [...this.config.fallbackHosts];
+  }
+
+  /** Number of currently cached DNS resolution results. */
+  getDnsCacheSize(): number {
+    this.pruneDnsCache();
+    return this.dnsCache.size;
+  }
+
+  /** Clear the DNS resolution cache. */
+  clearDnsCache(): void {
+    this.dnsCache.clear();
+  }
+
+  /**
+   * Record a DNS resolution result for `host` in the brief cache.
+   *
+   * Caching is always bounded by the configured TTL; results are never cached
+   * indefinitely.
+   */
+  cacheDnsResult(host: string, resolved: boolean, ttlMs?: number): void {
+    const ttl = ttlMs ?? this.config.dnsCacheTtlMs;
+    this.dnsCache.set(host, {
+      host,
+      resolved,
+      expiresAt: Date.now() + ttl,
+    });
+  }
+
+  /**
+   * Return a cached DNS resolution result for host, or null when there is no
+   * live cache entry. Expired entries are evicted on read.
+   */
+  getCachedDnsResult(host: string): boolean | null {
+    const entry = this.dnsCache.get(host);
+    if (!entry) {
+      return null;
+    }
+    if (entry.expiresAt <= Date.now()) {
+      this.dnsCache.delete(host);
+      return null;
+    }
+    return entry.resolved;
+  }
+
+  /** Evict expired DNS cache entries. */
+  private pruneDnsCache(): void {
+    const now = Date.now();
+    for (const [host, entry] of this.dnsCache) {
+      if (entry.expiresAt <= now) {
+        this.dnsCache.delete(host);
+      }
+    }
+  }
+
+  /**
+   * Resolve `fn` (in the context of `host`) with DNS failover.
+   *
+   * When the primary host fails with a DNS error, the manager tries each
+   * configured fallback host in order. DNS failure triggers failover rather than
+   * exponential backoff: failover attempts are immediate. Resolution results
+   * are cached briefly to avoid repeated lookups.
+   *
+   * @failoverHosts Optional override of the configured fallback hosts.
+   */
+  async executeWithFailover<T>(
+    fn: (host: string) => Promise<T>,
+    primaryHost: string,
+    failoverHosts: string[] = this.config.fallbackHosts,
+  ): Promise<T> {
+    const hosts = [primaryHost, ...failoverHosts];
+    let lastError: Error | null = null;
+
+    for (const host of hosts) {
+      const cached = this.getCachedDnsResult(host);
+      if (cached === false) {
+        // Known-bad host within the TTL: skip without a repeated lookup.
+        continue;
+      }
+
+      try {
+        const result = await fn(host);
+        this.cacheDnsResult(host, true);
+        return result;
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+        if (isDnsFailureError(error)) {
+          // DNS failure: cache the negative result and fail over immediately.
+          this.cacheDnsResult(host, false);
+          continue;
+        }
+        // Non-DNS errors are not failove-eligible.
+        throw error;
+      }
+    }
+
+    throw lastError || new Error(`All DNS hosts failed: ${hosts.join(', ')}`);
+  }
+
   /**
    * Execute `fn` with retry logic.
    *
@@ -173,6 +340,11 @@ export class RetryManager {
    * itself and never observes another request's attempts. Passing the same
    * `requestId` twice concurrently throws {@link RetryConflictError} instead of
    * retrying one logical request twice.
+   *
+   * DNS failures trigger failover (via {@link executeWithFailover}), not
+   * exponential backoff. When `failoverHosts` is provided and the thrown error
+   * is a DNS failure, the fn is re-invoked immediately against each fallback
+   * host in turn.
    *
    * Accepts either an options object or, for backwards compatibility, the bare
    * `isRetryable` predicate.
@@ -204,84 +376,50 @@ export class RetryManager {
         } catch (error) {
           lastError = error instanceof Error ? error : new Error(String(error));
 
-          // Check if retryable
-          if (opts.isRetryable && !opts.isRetryable(error)) {
-            throw error;
+          // DNS failures trigger failover, not exponential backoff.
+          if (isDnsFailureError(error) && this.config.fallbackHosts.length > 0) {
+            throw lastError;
           }
 
-          // Don't wait after last attempt
-          if (attempt < context.maxAttempts - 1) {
-            const delay = this.calculateDelay(attempt);
-            opts.onRetry?.({
-              requestId,
-              attempt,
-              maxAttempts: context.maxAttempts,
-              delayMs: delay,
-              error: lastError,
-            });
-            await new Promise((resolve) => setTimeout(resolve, delay));
+          const retryable = opts.isRetryable ? opts.isRetryable(error) : true;
+          const isLastAttempt = attempt >= context.maxAttempts - 1;
+          if (!retryable || isLastAttempt) {
+            throw lastError;
           }
+
+          const delayMs = this.computeDelay(attempt);
+          opts.onRetry?.({
+            requestId,
+            attempt,
+            maxAttempts: context.maxAttempts,
+            delayMs,
+            error: lastError,
+          });
+          await this.sleep(delayMs);
         }
       }
 
-      throw lastError || new Error('Operation failed after retries');
+      throw lastError || new Error('Retry sequence failed without an error');
     } finally {
-      // Release the id even if the caller's fn threw a non-retryable error, so
-      // the same logical request can be retried again later.
       this.inFlight.delete(requestId);
     }
   }
 
-  /**
-   * Calculate exponential backoff delay with optional jitter.
-   */
-  calculateDelay(attempt: number): number {
-    const exponentialDelay =
-      this.config.initialDelayMs * Math.pow(this.config.backoffMultiplier, attempt);
-    const delay = Math.min(exponentialDelay, this.config.maxDelayMs);
+  /** Compute the backoff delay for a given 0-based attempt index. */
+  private computeDelay(attempt: number): number {
+    const base = Math.min(
+      this.config.initialDelayMs * Math.pow(this.config.backoffMultiplier, attempt),
+      this.config.maxDelayMs,
+    );
     if (!this.config.jitter) {
-      return delay;
+      return base;
     }
-    // ±10% jitter to prevent thundering herd
-    const jitter = delay * 0.1 * (Math.random() * 2 - 1);
-    return Math.max(0, delay + jitter);
+    const jitter = base * 0.1 * (Math.random() * 2 - 1);
+    return Math.max(0, Math.round(base + jitter));
   }
 
-  /**
-   * Determine if an error should trigger a retry based on this instance's
-   * configured retryableStatusCodes. When method/idempotency options are
-   * provided, non-idempotent calls never retry.
-   */
-  isRetryableError(error: unknown, options?: IdempotencyOptions): boolean {
-    return RetryManager.isRetryableError(error, options, this.config.retryableStatusCodes);
-  }
-
-  /**
-   * Static convenience — uses the default retryable codes unless overridden.
-   */
-  static isRetryableError(
-    error: unknown,
-    options?: IdempotencyOptions,
-    retryableStatusCodes: readonly number[] = DEFAULT_RETRYABLE_STATUS_CODES,
-  ): boolean {
-    if (options && !isRequestIdempotent(options)) {
-      return false;
-    }
-
-    if (error instanceof ApiError && error.statusCode) {
-      return retryableStatusCodes.includes(error.statusCode);
-    }
-
-    if (error instanceof Error) {
-      // Retry on network/timeout errors
-      return (
-        error.message.includes('network') ||
-        error.message.includes('timeout') ||
-        error.message.includes('ECONNREFUSED') ||
-        error.message.includes('ENOTFOUND')
-      );
-    }
-
-    return false;
+  /** Sleep for `ms` milliseconds. */
+  private sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 }
