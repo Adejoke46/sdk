@@ -231,6 +231,7 @@ export type {
   Middleware,
   MiddlewareContext,
 } from './types/errors';
+export { isRetryableError } from './lib/errors/utils';
 
 // Re-export domain models
 export type {
