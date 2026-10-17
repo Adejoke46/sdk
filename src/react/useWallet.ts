@@ -24,6 +24,8 @@ export interface UseWalletState {
   nonce?: string;
   challengeStep:
     'idle' | 'nonce-generated' | 'challenge-ready' | 'verifying' | 'verified' | 'error';
+  balances: Record<string, { available: number; pending: number; total: number }>;
+  lastRealtimeUpdate?: number;
 }
 
 export interface UseWalletActions {
@@ -106,15 +108,18 @@ export { listWalletsSuspenseCache, getBalanceSuspenseCache };
 export function useWallet(options: UseWalletOptions = {}): UseWalletState & UseWalletActions {
   const { useSuspense = false } = options;
   const { client, setError, setIsLoading } = useDorisio();
+  const { realtime = false } = options;
 
   const [state, setState] = useState<UseWalletState>({
     wallets: [],
     loading: false,
     challengeStep: 'idle',
+    balances: {},
   });
 
   const isMountedRef = useRef(true);
   const abortControllersRef = useRef<Set<AbortController>>(new Set());
+  const realtimeSubscriptionRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -131,14 +136,6 @@ export function useWallet(options: UseWalletOptions = {}): UseWalletState & UseW
   const stateRef = useRef(state);
   stateRef.current = state;
 
-  const withAbort = <T>(fn: (signal: AbortSignal) => Promise<T>): Promise<T> => {
-    const controller = new AbortController();
-    abortControllersRef.current.add(controller);
-    return fn(controller.signal).finally(() => {
-      abortControllersRef.current.delete(controller);
-    });
-  };
-
   // Functional update that also mirrors the result into stateRef, so helpers never read a stale snapshot.
   const update = useCallback((fn: (s: UseWalletState) => UseWalletState): void => {
     if (!isMountedRef.current) return;
@@ -148,6 +145,68 @@ export function useWallet(options: UseWalletOptions = {}): UseWalletState & UseW
       return next;
     });
   }, []);
+
+  useEffect(() => {
+    if (!realtime) {
+      const unsubscribe = realtimeSubscriptionRef.current;
+      realtimeSubscriptionRef.current = null;
+      if (unsubscribe) unsubscribe();
+      return;
+    }
+
+    let mounted = true;
+
+    const setup = async (): Promise<void> => {
+      try {
+        if (!client.getRealtime()) {
+          await client.enableRealtime();
+        }
+      } catch {
+        return;
+      }
+      if (!mounted) return;
+
+      const unsubscribe = client.subscribeRealtime<WalletBalanceEvent>('balance', (event) => {
+        if (!isMountedRef.current || !mounted) return;
+        const { walletId, publicKey, balance, timestamp } = event.data;
+        update((s) => {
+          const nextWallets = s.wallets.map((w) => {
+            const matches =
+              (walletId && w.id === walletId) || (publicKey && w.publicKey === publicKey);
+            if (!matches) return w;
+            return { ...w, balance };
+          });
+          const nextBalances = { ...s.balances };
+          if (walletId) nextBalances[walletId] = balance;
+          return {
+            ...s,
+            wallets: nextWallets,
+            balances: nextBalances,
+            lastRealtimeUpdate: timestamp ?? Date.now(),
+          };
+        });
+      });
+      realtimeSubscriptionRef.current = unsubscribe;
+    };
+
+    setup();
+
+    return () => {
+      mounted = false;
+      const unsubscribe = realtimeSubscriptionRef.current;
+      realtimeSubscriptionRef.current = null;
+      if (unsubscribe) unsubscribe();
+    };
+  }, [realtime, client, update]);
+
+  const withAbort = <T>(fn: (signal: AbortSignal) => Promise<T>): Promise<T> => {
+    const controller = new AbortController();
+    abortControllersRef.current.add(controller);
+    return fn(controller.signal).finally(() => {
+      abortControllersRef.current.delete(controller);
+    });
+  };
+
   const begin = useCallback(
     (extra: Partial<UseWalletState> = {}) =>
       () => update((s) => ({ ...s, loading: true, error: undefined, ...extra })),
@@ -553,6 +612,7 @@ export function useWallet(options: UseWalletOptions = {}): UseWalletState & UseW
       wallets: [],
       loading: false,
       challengeStep: 'idle',
+      balances: {},
     };
     setState(initial);
     stateRef.current = initial;
