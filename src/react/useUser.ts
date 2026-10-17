@@ -1,7 +1,7 @@
 /**
  * useUser Hook
  *
- * Hook for user/fan profile operations.
+ * Hook for user/fan profile operations with offline fallback support.
  */
 
 import { useState, useCallback, useDebugValue } from 'react';
@@ -10,12 +10,22 @@ import { User, UserProfile, UpdateUserRequest } from '../types/models';
 import { ApiError } from '../types/errors';
 import { useDorisio } from './DorisioProvider';
 
+/** Time-to-live for cached user data (5 minutes). Respected on every cache read. */
+export const USER_CACHE_TTL_MS = 5 * 60 * 1000;
+
+interface CachedUser {
+  user: User;
+  fetchedAt: number;
+}
+
 interface UseUserState {
   user: User | null;
   profile: UserProfile | null;
   loading: boolean;
   error: ApiError | null;
   isAuthenticated: boolean;
+  /** True when the currently displayed user was served from the offline cache. */
+  isCached: boolean;
 }
 
 interface UseUserActions {
@@ -40,6 +50,10 @@ const userSuspenseCache = new Map<string, UserSuspenseEntry>();
 /**
  * Hook for managing authenticated user profile, fan profile fetching, and profile updates.
  *
+ * When a network request fails, the hook falls back to the most recently cached user data
+ * (if `allowCached` is not `false`) and marks it with `isCached: true`. Successful online
+ * fetches refresh the data and update the cache. Cache entries expire after `USER_CACHE_TTL_MS`.
+ *
  * @returns State and action handlers for user operations
  *
  * @debugValue Displays `{ loading, error, user, isAuthenticated }` in React DevTools.
@@ -53,18 +67,19 @@ const userSuspenseCache = new Map<string, UserSuspenseEntry>();
  * import { useUser } from 'dorisio-sdk/react';
  *
  * function UserProfileCard() {
- *   const { user, loading, error, fetchCurrentUser } = useUser();
+ *   const { user, loading, error, isCached, fetchCurrentUser } = useUser();
  *
  *   useEffect(() => {
  *     fetchCurrentUser();
  *   }, [fetchCurrentUser]);
  *
  *   if (loading) return <p>Loading profile...</p>;
- *   if (error) return <p className="error">{error.message}</p>;
+ *   if (error && !isCached) return <p className="error">{error.message}</p>;
  *   if (!user) return <p>Please log in.</p>;
  *
  *   return (
  *     <div>
+ *       {isCached && <span>Offline cache</span>}
  *       <h3>{user.name}</h3>
  *       <p>{user.email}</p>
  *     </div>
@@ -83,7 +98,11 @@ export function useUser(options: UseUserOptions = {}): UseUserState & UseUserAct
     loading: false,
     error: null,
     isAuthenticated: false,
+    isCached: false,
   });
+
+  // Per-instance offline cache keyed by cache key. Respects TTL on every read.
+  const cacheRef = useRef<Map<string, CachedUser>>(new Map());
 
   const setLoading = useCallback((loading: boolean) => {
     setState((prev) => ({ ...prev, loading }));
@@ -95,6 +114,20 @@ export function useUser(options: UseUserOptions = {}): UseUserState & UseUserAct
       setParentError({ message: error.message, code: error.code || 'USER_ERROR' });
     }
   }, [setParentError]);
+
+  const getCached = useCallback((cacheKey: string): User | null => {
+    const entry = cacheRef.current.get(cacheKey);
+    if (!entry) return null;
+    if (Date.now() - entry.fetchedAt > USER_CACHE_TTL_MS) {
+      cacheRef.current.delete(cacheKey);
+      return null;
+    }
+    return entry.user;
+  }, []);
+
+  const setCached = useCallback((cacheKey: string, user: User) => {
+    cacheRef.current.set(cacheKey, { user, fetchedAt: Date.now() });
+  }, []);
 
   const fetchUser = useCallback(
     (userId: string): User | null | Promise<User | null> => {
@@ -201,7 +234,6 @@ export function useUser(options: UseUserOptions = {}): UseUserState & UseUserAct
 
     return (async () => {
       setLoading(true);
-      setError(null);
 
       try {
         const response = await client.request('GET', '/users/me', undefined, {
@@ -209,17 +241,34 @@ export function useUser(options: UseUserOptions = {}): UseUserState & UseUserAct
         });
 
         if (response.success && response.data) {
+          const user = response.data as User;
+          setCached(cacheKey, user);
           setState((prev) => ({
             ...prev,
             user: response.data as User,
             isAuthenticated: true,
           }));
-          return response.data as User;
+          return user;
         }
 
         return null;
       } catch (err) {
         const error = err as ApiError;
+
+        if (allowCached) {
+          const cached = getCached(cacheKey);
+          if (cached) {
+            setState((prev) => ({
+              ...prev,
+              user: cached,
+              isAuthenticated: true,
+              isCached: true,
+              error: null,
+            }));
+            return cached;
+          }
+        }
+
         setError(error);
         setState((prev) => ({ ...prev, isAuthenticated: false }));
         return null;
@@ -240,11 +289,15 @@ export function useUser(options: UseUserOptions = {}): UseUserState & UseUserAct
         });
 
         if (response.success && response.data) {
+          const user = response.data as User;
+          setCached(`user:${userId}`, user);
           setState((prev) => ({
             ...prev,
-            user: response.data as User,
+            user,
+            isAuthenticated: true,
+            isCached: false,
           }));
-          return response.data as User;
+          return user;
         }
 
         return null;
@@ -256,7 +309,7 @@ export function useUser(options: UseUserOptions = {}): UseUserState & UseUserAct
         setLoading(false);
       }
     },
-    [client, setError, setLoading]
+    [client, setError, setLoading, setCached]
   );
 
   const clearError = useCallback(() => {
