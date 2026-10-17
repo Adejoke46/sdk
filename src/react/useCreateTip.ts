@@ -11,10 +11,16 @@
  * Always `await` the actions inside try/catch (or `.catch()`) in event handlers.
  */
 
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useReducer, useCallback, useRef, useEffect } from 'react';
 import { useDorisio } from './DorisioProvider';
 import { Transaction } from '../types/models';
 import { runSafely } from './safe-async';
+import {
+  tipFormReducer,
+  initialTipFormState,
+  type TipFormState,
+  type TipFormAction,
+} from './useCreateTip.reducer';
 import type {
   CreateTipRequest,
   BuildTransactionRequest,
@@ -22,13 +28,7 @@ import type {
   SubmitTransactionResponse,
 } from '../client/transactions';
 
-export interface UseCreateTipState {
-  data?: Transaction;
-  loading: boolean;
-  submitting: boolean;
-  error?: string;
-  step: 'idle' | 'creating' | 'building' | 'submitting' | 'confirming' | 'success' | 'error';
-}
+export interface UseCreateTipState extends TipFormState {}
 
 export interface UseCreateTipActions {
   createTip: (data: CreateTipRequest, options?: { debounceMs?: number }) => Promise<Transaction>;
@@ -81,11 +81,7 @@ export interface UseCreateTipActions {
 export function useCreateTip(): UseCreateTipState & UseCreateTipActions {
   const { client, setError, setIsLoading } = useDorisio();
 
-  const [state, setState] = useState<UseCreateTipState>({
-    loading: false,
-    submitting: false,
-    step: 'idle',
-  });
+  const [state, dispatch] = useReducer(tipFormReducer, initialTipFormState);
 
   const isMountedRef = useRef(true);
   const abortControllersRef = useRef<Set<AbortController>>(new Set());
@@ -118,10 +114,10 @@ export function useCreateTip(): UseCreateTipState & UseCreateTipActions {
     });
   };
 
-  const safeSetState = useCallback((fn: React.SetStateAction<UseCreateTipState>) => {
+  const safeDispatch = useCallback((action: TipFormAction) => {
     if (!isMountedRef.current) return;
-    setState(fn);
-  }, []);
+    dispatch(action);
+  }, [dispatch]);
 
   const withSubmissionGuard = useCallback(
     <T>(action: string, task: () => Promise<T>, debounceMs: number = 500): Promise<T> => {
@@ -166,20 +162,12 @@ export function useCreateTip(): UseCreateTipState & UseCreateTipActions {
   );
 
   const start = useCallback(
-    (step: UseCreateTipState['step']) => () =>
-      safeSetState((s) => ({
-        ...s,
-        loading: true,
-        submitting: true,
-        step,
-        error: undefined,
-      })),
-    [safeSetState]
+    (step: TipFormState['step']) => () => safeDispatch({ type: 'START', step }),
+    [safeDispatch]
   );
   const fail = useCallback(
-    (error: string) =>
-      safeSetState((s) => ({ ...s, error, step: 'error', loading: false, submitting: false })),
-    [safeSetState]
+    (error: string) => safeDispatch({ type: 'FAIL', error }),
+    [safeDispatch]
   );
 
   const createTip = useCallback(
@@ -199,19 +187,13 @@ export function useCreateTip(): UseCreateTipState & UseCreateTipActions {
             () =>
               withAbort(async (signal) => {
                 const tip = await client.createTip(data, { signal });
-                safeSetState((s) => ({
-                  ...s,
-                  data: tip,
-                  step: 'idle',
-                  loading: false,
-                  submitting: false,
-                }));
+                safeDispatch({ type: 'COMPLETE', data: tip, step: 'idle' });
                 return tip;
               })
           ),
         options?.debounceMs ?? 500
       ),
-    [client, setError, setIsLoading, safeSetState, start, fail, withSubmissionGuard]
+    [client, setError, setIsLoading, safeDispatch, start, fail, withSubmissionGuard]
   );
 
   const buildTransaction = useCallback(
@@ -231,13 +213,13 @@ export function useCreateTip(): UseCreateTipState & UseCreateTipActions {
             () =>
               withAbort(async (signal) => {
                 const result = await client.buildPaymentTransaction(tipId, data, { signal });
-                safeSetState((s) => ({ ...s, step: 'idle', loading: false, submitting: false }));
+                safeDispatch({ type: 'COMPLETE', step: 'idle' });
                 return result;
               })
           ),
         options?.debounceMs ?? 500
       ),
-    [client, setError, setIsLoading, safeSetState, start, fail, withSubmissionGuard]
+    [client, setError, setIsLoading, safeDispatch, start, fail, withSubmissionGuard]
   );
 
   const submitTransaction = useCallback(
@@ -263,13 +245,13 @@ export function useCreateTip(): UseCreateTipState & UseCreateTipActions {
                   },
                   { signal }
                 );
-                safeSetState((s) => ({ ...s, step: 'idle', loading: false, submitting: false }));
+                safeDispatch({ type: 'COMPLETE', step: 'idle' });
                 return result;
               })
           ),
         options?.debounceMs ?? 500
       ),
-    [client, setError, setIsLoading, safeSetState, start, fail, withSubmissionGuard]
+    [client, setError, setIsLoading, safeDispatch, start, fail, withSubmissionGuard]
   );
 
   const confirmTransaction = useCallback(
@@ -289,31 +271,21 @@ export function useCreateTip(): UseCreateTipState & UseCreateTipActions {
             () =>
               withAbort(async (signal) => {
                 const tip = await client.checkTransactionConfirmation(tipId, { signal });
-                safeSetState((s) => ({
-                  ...s,
-                  data: tip,
-                  step: 'success',
-                  loading: false,
-                  submitting: false,
-                }));
+                safeDispatch({ type: 'COMPLETE', data: tip, step: 'success' });
                 return tip;
               })
           ),
         options?.debounceMs ?? 500
       ),
-    [client, setError, setIsLoading, safeSetState, start, fail, withSubmissionGuard]
+    [client, setError, setIsLoading, safeDispatch, start, fail, withSubmissionGuard]
   );
 
   const reset = useCallback(() => {
     inFlightRef.current = false;
     inFlightPromiseRef.current = null;
     lastSubmitTimeRef.current = {};
-    safeSetState({
-      loading: false,
-      submitting: false,
-      step: 'idle',
-    });
-  }, [safeSetState]);
+    safeDispatch({ type: 'RESET' });
+  }, [safeDispatch]);
 
   return {
     ...state,
