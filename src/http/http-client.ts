@@ -20,6 +20,14 @@ import { OfflineQueue } from './offline-queue';
 import { ConnectionPool } from './connection-pool';
 import { JsonSerializer } from './serializer';
 import {
+  normalizeProxyConfig,
+  selectProxy,
+  isBypassed,
+  buildProxyHeaders,
+  type ProxyConfig,
+  type ProxyEntry,
+} from './proxy';
+import {
   MetricsCollector,
   type MetricsSummary,
   type MetricsCallback,
@@ -37,7 +45,7 @@ import {
 import { getTracingProvider, SpanStatus } from '../lib/telemetry';
 import { validateSchema } from '../validation/schema-validator';
 import type { ValidationSchemas } from '../types/validation';
-import { prepareRequestBody, type RequestCompressionConfig } from './compress';
+import { prepareRequestBody, decompressResponseBody, type RequestCompressionConfig } from './compress';
 import { createHttpError } from './error-factory';
 import { Http2PushManager, type Http2PushConfig } from './http2-push';
 
@@ -185,16 +193,7 @@ export interface HttpClientOptions {
   http2Push?: Http2PushConfig | false;
 }
 
-export interface ProxyConfig {
-  /** Proxy URL (e.g. 'http://proxy:8080') */
-  url: string;
-  /** Proxy auth username */
-  username?: string;
-  /** Proxy auth password */
-  password?: string;
-  /** Whether to reject unauthorized SSL certificates */
-  rejectUnauthorized?: boolean;
-}
+export type { ProxyConfig, type ProxyEntry } from './proxy';
 
 function normalizeMode(mode?: HttpClientMode): 'live' | 'sandbox' {
   if (mode === 'sandbox') return 'sandbox';
@@ -334,7 +333,7 @@ export class HttpClient {
   private throttleManager?: ThrottleManager;
   private hookManager?: HookManager;
   private proxy?: ProxyConfig;
-  private http2PushManager?: Http2PushManager;
+  private proxyIndex = 0;
   private onResponse?: (response: Response) => void;
   private compression?: RequestCompressionConfig;
   private streamHandler: StreamHandler;
@@ -840,6 +839,10 @@ export class HttpClient {
 
     let headers = { ...this.defaultHeaders, ...options.headers };
     const serializedBody = options.body ? this.serializer.serialize(options.body) : undefined;
+
+    if (this.compression?.enabled !== false && !hasHeader(headers, 'accept-encoding')) {
+      headers['Accept-Encoding'] = 'gzip, br';
+    }
     let requestBody: BodyInit | undefined;
     if (serializedBody !== undefined) {
       const preparedBody = await prepareRequestBody(serializedBody, headers, this.compression);
@@ -857,16 +860,28 @@ export class HttpClient {
         : AbortSignal.timeout(options.timeout ?? this.timeout),
     };
 
+    // Select a proxy (round-robin) and apply bypass rules + proxy headers.
+    const proxyConfig = this.proxy;
+    const proxies = proxyConfig ? normalizeProxyConfig(proxyConfig) : [];
+    const bypassed = proxies.length > 0 && isBypassed(url, proxyConfig?.bypass);
+    let activeProxy: ProxyEntry | undefined;
+    if (!bypassed && proxies.length > 0) {
+      activeProxy = selectProxy(proxies, this.proxyIndex);
+      this.proxyIndex = (this.proxyIndex + 1) % proxies.length;
+      headers = { ...headers, ...buildProxyHeaders(activeProxy) };
+      fetchOptions.headers = headers;
+    }
+
     // If proxy is configured, try to use undici ProxyAgent (Node.js only)
-    if (this.proxy?.url && typeof globalThis.process !== 'undefined') {
+    if (activeProxy?.url && typeof globalThis.process !== 'undefined') {
       try {
         // Dynamic import to avoid bundling undici in browser builds
         const undici = await (Function('return import("undici")')() as Promise<
           typeof import('undici')
         >);
         (fetchOptions as Record<string, unknown>).dispatcher = new undici.ProxyAgent({
-          uri: this.proxy.url,
-          requestTls: { rejectUnauthorized: this.proxy.rejectUnauthorized ?? true },
+          uri: activeProxy.url,
+          requestTls: { rejectUnauthorized: activeProxy.rejectUnauthorized ?? true },
         });
       } catch {
         // undici not available, fall through to direct fetch
@@ -912,12 +927,13 @@ export class HttpClient {
         if (!response.ok) {
           let error: Record<string, unknown> = {};
           try {
-            const errorText = await response.text();
+            const buffer = await response.arrayBuffer();
+            const encoding = response.headers.get('content-encoding') ?? '';
+            const errorText = await decompressResponseBody(buffer, encoding);
             error = errorText
               ? this.serializer.deserialize<Record<string, unknown>>(errorText)
               : {};
           } catch {
-            // Fallback for mocks that only implement json()
             try {
               error =
                 (await (response as { json?: () => Promise<Record<string, unknown>> }).json?.()) ??
@@ -949,11 +965,23 @@ export class HttpClient {
 
         let data: T;
         try {
-          const text = await response.text();
+          const buffer = await response.arrayBuffer();
+          const encoding = response.headers.get('content-encoding') ?? '';
+          const text = await decompressResponseBody(buffer, encoding);
           data = this.serializer.deserialize<T>(text);
         } catch {
-          // Fallback for mocks that only implement json()
-          data = (await (response as { json?: () => Promise<T> }).json?.()) ?? (undefined as T);
+          // Fallback for mocks that only implement json() / text()
+          const fallback = response as {
+            json?: () => Promise<T>;
+            text?: () => Promise<string>;
+          };
+          if (fallback.json) {
+            data = await fallback.json();
+          } else if (fallback.text) {
+            data = this.serializer.deserialize<T>(await fallback.text());
+          } else {
+            data = undefined as T;
+          }
         }
 
         return data;
