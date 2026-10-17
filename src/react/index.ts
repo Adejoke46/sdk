@@ -28,3 +28,14 @@ export {
 } from './useTransactionHistory';
 export { useCreator } from './useCreator';
 export { useUser } from './useUser';
+export {
+  renderWithDorisio,
+  createMockClient,
+  waitForHookResult,
+  type RenderWithDorisioOptions,
+  type RenderWithDorisioReturn,
+  type CreateMockClientOptions,
+  type CreateMockClientReturn,
+  type WaitForHookResultOptions,
+  type MockRequest,
+} from './__mocks__/test-utils';
