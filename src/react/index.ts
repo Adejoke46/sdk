@@ -28,3 +28,4 @@ export {
 } from './useTransactionHistory';
 export { useCreator } from './useCreator';
 export { useUser } from './useUser';
+export { DorisioBoundary, type DorisioBoundaryProps, type DorisioBoundaryState } from './DorisioBoundary';
