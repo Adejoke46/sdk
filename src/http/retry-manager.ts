@@ -17,7 +17,61 @@
  * briefly to avoid repeated lookups.
  */
 
-import { DorisioError } from '../types';
+import { ApiError, DorisioError, RateLimitError, type RateLimitMetadata } from '../types';
+
+function parseHeaderSeconds(value: string | null | undefined): number | undefined {
+  if (!value || !/^\d+$/.test(value.trim())) return undefined;
+  const seconds = Number(value);
+  return Number.isFinite(seconds * 1000) ? seconds : undefined;
+}
+
+function parseHeaderDate(value: string | null | undefined): number | undefined {
+  if (!value || !/^[a-z]{3}/i.test(value.trim())) return undefined;
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? timestamp / 1000 : undefined;
+}
+
+/** Parse server rate-limit hints. Retry-After takes precedence over the reset timestamp. */
+export function parseRateLimitHeaders(
+  headers?: Pick<Headers, 'get'>,
+  now = Date.now()
+): { retryAfter?: number; rateLimit: RateLimitMetadata } {
+  const retryAfter = headers?.get('Retry-After');
+  const reset = headers?.get('X-RateLimit-Reset');
+  const rateLimit: RateLimitMetadata = {
+    limit: parseHeaderSeconds(headers?.get('X-RateLimit-Limit')),
+    remaining: parseHeaderSeconds(headers?.get('X-RateLimit-Remaining')),
+    reset: parseHeaderSeconds(reset) ?? parseHeaderDate(reset),
+  };
+  const retryAt = parseHeaderDate(retryAfter) ?? rateLimit.reset;
+  return {
+    retryAfter:
+      parseHeaderSeconds(retryAfter) ??
+      (retryAt === undefined ? undefined : Math.max(0, retryAt - now / 1000)),
+    rateLimit,
+  };
+}
+
+/** Split long server-directed waits to avoid setTimeout's signed 32-bit overflow. */
+export async function waitForRetry(delayMs: number, signal?: AbortSignal): Promise<void> {
+  signal?.throwIfAborted();
+  let remaining = delayMs;
+  do {
+    const chunk = Math.min(remaining, 2 ** 31 - 1);
+    await new Promise<void>((resolve, reject) => {
+      const onAbort = () => {
+        clearTimeout(timer);
+        reject(signal?.reason);
+      };
+      const timer = setTimeout(() => {
+        signal?.removeEventListener('abort', onAbort);
+        resolve();
+      }, chunk);
+      signal?.addEventListener('abort', onAbort, { once: true });
+    });
+    remaining -= chunk;
+  } while (remaining > 0);
+}
 
 export interface RetryConfig {
   maxAttempts: number;
@@ -387,7 +441,7 @@ export class RetryManager {
             throw lastError;
           }
 
-          const delayMs = this.computeDelay(attempt);
+          const delayMs = this.calculateDelay(attempt, lastError);
           opts.onRetry?.({
             requestId,
             attempt,
@@ -395,7 +449,7 @@ export class RetryManager {
             delayMs,
             error: lastError,
           });
-          await this.sleep(delayMs);
+          await waitForRetry(delayMs);
         }
       }
 
@@ -415,8 +469,17 @@ export class RetryManager {
     return Math.max(0, Math.round(Math.min(delay, this.config.maxDelayMs)));
   }
 
-  /** Public wrapper exposing the backoff calculation for a given attempt index. */
-  public calculateDelay(attempt: number): number {
+  /** Respect a 429 server delay, otherwise use the configured exponential backoff. */
+  public calculateDelay(attempt: number, error?: Error): number {
+    if (
+      (error instanceof ApiError || error instanceof RateLimitError) &&
+      error.statusCode === 429 &&
+      error.retryAfter !== undefined &&
+      Number.isFinite(error.retryAfter * 1000) &&
+      error.retryAfter >= 0
+    ) {
+      return error.retryAfter * 1000;
+    }
     return this.computeDelay(attempt);
   }
 
@@ -449,10 +512,5 @@ export class RetryManager {
   /** Instance-level retryability check using the configured status codes. */
   isRetryableError(error: unknown, options?: IdempotencyOptions): boolean {
     return RetryManager.isRetryableError(error, options, this.config.retryableStatusCodes);
-  }
-
-  /** Sleep for `ms` milliseconds. */
-  private sleep(ms: number): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 }
