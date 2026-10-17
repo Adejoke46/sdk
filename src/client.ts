@@ -165,6 +165,13 @@ export interface ClientConfig {
   throttleMaxRequests?: number;
   /** Throttling window in ms */
   throttleWindowMs?: number;
+  /**
+   * Base delay in ms for exponential backoff retries (default 1000).
+   * Delay grows as `baseDelay * (2 ^ attempt)`, plus optional jitter.
+   */
+  retryBaseDelayMs?: number;
+  /** Maximum delay in ms cap for exponential backoff retries (default 30000). */
+  retryMaxDelayMs?: number;
   /** Proxy configuration for corporate environments */
   proxy?: ProxyConfig;
   /** Compress serialized request bodies above the configured threshold (default 1 KiB). */
@@ -280,6 +287,8 @@ export class DorisioClient {
       enableThrottling: config.enableThrottling,
       throttleMaxRequests: config.throttleMaxRequests,
       throttleWindowMs: config.throttleWindowMs,
+      retryBaseDelayMs: config.retryBaseDelayMs,
+      retryMaxDelayMs: config.retryMaxDelayMs,
       proxy: config.proxy,
       compress: config.compress,
     };
@@ -315,6 +324,8 @@ export class DorisioClient {
       schemas: config.schemas,
       timeout: this.config.timeout,
       retryAttempts: getConfig().retryAttempts,
+      retryBaseDelayMs: config.retryBaseDelayMs,
+      retryMaxDelayMs: config.retryMaxDelayMs,
       mode,
       sandboxSeed: config.sandboxSeed,
       sandboxLatency: config.sandboxLatency,
