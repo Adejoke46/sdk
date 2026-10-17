@@ -13,6 +13,7 @@ import { CacheManager } from '../cache/cache-manager';
 import { InterceptorManager } from './interceptors';
 import { generateRequestId, isRequestIdempotent, RetryConflictError } from './retry-manager';
 import { CircuitBreaker, type CircuitBreakerConfig, CircuitOpenError } from './circuit-breaker';
+import { parseCacheControl, ttlFromCacheControl } from './cache-control';
 import { MockRouter, type SandboxHistoryEntry } from '../sandbox/mock-router';
 import { RequestQueue } from './request-queue';
 import { PriorityRequestQueue } from '../queue/request-queue';
@@ -232,6 +233,22 @@ function getHeader(headers: Record<string, string> | undefined, name: string): s
   return entry?.[1];
 }
 
+/** Convert a fetch `Headers` object (or plain record) into a plain record. */
+function responseHeadersToRecord(headers: unknown): Record<string, string> {
+  const record: Record<string, string> = {};
+  if (!headers) return record;
+  if (typeof (headers as Headers).forEach === 'function') {
+    (headers as Headers).forEach((value, key) => {
+      record[key] = value;
+    });
+  } else if (typeof headers === 'object') {
+    for (const [key, value] of Object.entries(headers as Record<string, string>)) {
+      record[key] = String(value);
+    }
+  }
+  return record;
+}
+
 /** Attach the tracing id unless the caller explicitly supplied one. */
 function withCorrelationIdHeader(
   headers: Record<string, string> | undefined,
@@ -311,6 +328,8 @@ export class HttpClient {
   private deduplicationWindow: number;
   private deduplicationCache = new Map<string, CachedRequest>();
   private cacheManager: CacheManager;
+  /** Explicitly configured default TTL (ms), if any. Wins over response max-age. */
+  private cacheTtl: number | undefined;
   private errorHandler?: ErrorHandler;
   private requestIdGenerator?: () => string;
   private correlationIdEnabled: boolean;
@@ -352,6 +371,7 @@ export class HttpClient {
     this.deduplicateRequests = options?.deduplicateRequests ?? true;
     this.deduplicationWindow = options?.deduplicationWindow ?? 1000;
     this.cacheManager = new CacheManager(options?.cache);
+    this.cacheTtl = options?.cache?.ttl;
     this.errorHandler = options?.errorHandler;
     this.requestIdGenerator = options?.requestIdGenerator;
     this.correlationIdEnabled = options?.correlationId !== false;
@@ -497,6 +517,20 @@ export class HttpClient {
 
   getCacheManager(): CacheManager {
     return this.cacheManager;
+  }
+
+  /**
+   * Resolve the cache TTL (ms) for a response. An explicitly configured TTL
+   * wins over response `Cache-Control: max-age`; `no-store`/`no-cache` (ttl 0)
+   * means the response must not be stored. `undefined` lets the cache manager
+   * fall back to its configured default TTL.
+   */
+  private resolveResponseTtl(responseHeaders: Record<string, string>): number | undefined {
+    const cc = parseCacheControl(getHeader(responseHeaders, 'cache-control') ?? '');
+    if (cc.noStore || cc.noCache) return 0;
+    if (this.cacheTtl !== undefined) return this.cacheTtl;
+    const ttl = ttlFromCacheControl(cc);
+    return ttl === null ? undefined : ttl;
   }
 
   /**
@@ -654,6 +688,7 @@ export class HttpClient {
 
         const result = await this.executeDeduplication<T>(key, async () => {
           let response: T;
+          let responseHeaders: Record<string, string> = {};
           if (this.mode === 'sandbox') {
             const mocked = await this.mockRouter.handle(
               finalOptions.method,
@@ -663,7 +698,9 @@ export class HttpClient {
             response = mocked as T;
           } else {
             try {
-              response = await this.sendWithRetries<T>(path, finalOptions);
+              const fetched = await this.sendWithRetries<T>(path, finalOptions);
+              response = fetched.data;
+              responseHeaders = fetched.headers;
             } catch (error) {
               if (this.circuitBreaker && !(error instanceof CircuitOpenError)) {
                 if (error instanceof ApiError && error.statusCode !== undefined && error.statusCode < 500) {
@@ -678,12 +715,15 @@ export class HttpClient {
               } catch {
                 throw error;
               }
-              response = await this.sendWithRetries<T>(path, finalOptions);
+              const fetched = await this.sendWithRetries<T>(path, finalOptions);
+              response = fetched.data;
+              responseHeaders = fetched.headers;
             }
           }
 
           if (isCacheable) {
-            this.cacheManager.set(cacheMethod, cacheParams, cloneCachedValue(response));
+            const ttl = this.resolveResponseTtl(responseHeaders);
+            this.cacheManager.set(cacheMethod, cacheParams, cloneCachedValue(response), ttl);
           }
           return response;
         });
@@ -807,7 +847,10 @@ export class HttpClient {
    * replayed unless the caller opted in with `isIdempotent` or an
    * `Idempotency-Key` header.
    */
-  private async sendWithRetries<T>(path: string, options: RequestOptions): Promise<T> {
+  private async sendWithRetries<T>(path: string, options: RequestOptions): Promise<{
+    data: T;
+    headers: Record<string, string>;
+  }> {
     const url = `${this.baseUrl}${path}`;
     let headers = { ...this.defaultHeaders, ...options.headers };
     const serializedBody = options.body ? this.serializer.serialize(options.body) : undefined;
@@ -927,7 +970,7 @@ export class HttpClient {
           data = (await (response as { json?: () => Promise<T> }).json?.()) ?? (undefined as T);
         }
 
-        return data;
+        return { data, headers: responseHeadersToRecord(response.headers) };
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));
         if (lastError instanceof DorisioError && !lastError.requestId && options.requestId) {
@@ -967,7 +1010,10 @@ export class HttpClient {
                 continue;
               }
             } else if (action.action === 'fallback') {
-              return action.fallbackValue as T;
+              return {
+                data: action.fallbackValue as T,
+                headers: {},
+              };
             }
             // action === 'throw' falls through to throw error
           } catch (handlerError) {
