@@ -12,10 +12,11 @@
  *   so they never capture stale closures or form circular dep loops with state.
  */
 
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useRef, useDebugValue } from 'react';
 import { useDorisio } from './DorisioProvider';
 import { logRejection, runSafely } from './safe-async';
 import { Transaction } from '../types/models';
+import { formatDebugValue } from './debug-format';
 
 export interface TransactionHistoryOptions {
   page?: number;
@@ -47,6 +48,14 @@ export interface UseTransactionHistoryActions {
  *
  * Manages transaction history with built-in pagination support.
  * Can fetch user's tip history or creator's received tips.
+ *
+ * @debugValue Displays `{ loading, error, transactionsCount, page, pageSize, total }` in React DevTools.
+ *   - `loading` (boolean): whether a request is in flight
+ *   - `error` (string | undefined): last error message, if any
+ *   - `transactionsCount` (number): number of transactions on the current page
+ *   - `page` (number): current page number
+ *   - `pageSize` (number): items per page
+ *   - `total` (number): total number of transactions available
  *
  * @example
  * ```tsx
@@ -309,6 +318,17 @@ export function useTransactionHistory(
       requestIdRef.current += 1;
     },
     []
+  );
+
+  useDebugValue(
+    formatDebugValue({
+      loading: state.loading,
+      error: state.error,
+      transactionsCount: state.transactions.length,
+      page: state.page,
+      pageSize: state.pageSize,
+      total: state.total,
+    })
   );
 
   return {

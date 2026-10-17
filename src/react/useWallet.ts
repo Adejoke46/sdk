@@ -10,10 +10,11 @@
  *   `setState` and mirrored in `stateRef` so helpers never read a stale snapshot.
  */
 
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useState, useCallback, useRef, useEffect, useDebugValue } from 'react';
 import { useDorisio } from './DorisioProvider';
 import { Wallet } from '../types/models';
 import { runSafely } from './safe-async';
+import { formatDebugValue } from './debug-format';
 
 export interface UseWalletState {
   wallets: Wallet[];
@@ -42,6 +43,13 @@ export interface UseWalletActions {
  * and fetching wallet balances.
  *
  * @returns State and action handlers for wallet management
+ *
+ * @debugValue Displays `{ loading, error, challengeStep, walletsCount, selectedWallet }` in React DevTools.
+ *   - `loading` (boolean): whether a request is in flight
+ *   - `error` (string | undefined): last error message, if any
+ *   - `challengeStep` (string): current challenge-response flow step
+ *   - `walletsCount` (number): number of linked wallets
+ *   - `selectedWallet` (string | undefined): public key of the selected wallet, if any
  *
  * @example
  * ```tsx
@@ -414,6 +422,16 @@ export function useWallet(): UseWalletState & UseWalletActions {
     setState(initial);
     stateRef.current = initial;
   }, []);
+
+  useDebugValue(
+    formatDebugValue({
+      loading: state.loading,
+      error: state.error,
+      challengeStep: state.challengeStep,
+      walletsCount: state.wallets.length,
+      selectedWallet: state.selectedWallet?.publicKey,
+    })
+  );
 
   return {
     ...state,

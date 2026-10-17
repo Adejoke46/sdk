@@ -4,7 +4,8 @@
  * Hook for user/fan profile operations.
  */
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useDebugValue } from 'react';
+import { formatDebugValue } from './debug-format';
 import { User, UserProfile, UpdateUserRequest } from '../types/models';
 import { ApiError } from '../types/errors';
 import { useDorisio } from './DorisioProvider';
@@ -28,6 +29,12 @@ interface UseUserActions {
  * Hook for managing authenticated user profile, fan profile fetching, and profile updates.
  *
  * @returns State and action handlers for user operations
+ *
+ * @debugValue Displays `{ loading, error, user, isAuthenticated }` in React DevTools.
+ *   - `loading` (boolean): whether a request is in flight
+ *   - `error` (string | null): last error message, if any
+ *   - `user` (object | null): { id, name } of the current user, or null
+ *   - `isAuthenticated` (boolean): whether the user is authenticated
  *
  * @example
  * ```tsx
@@ -166,6 +173,15 @@ export function useUser(): UseUserState & UseUserActions {
   const clearError = useCallback(() => {
     setError(null);
   }, [setError]);
+
+  useDebugValue(
+    formatDebugValue({
+      loading: state.loading,
+      error: state.error?.message ?? null,
+      user: state.user ? { id: state.user.id, name: state.user.name } : null,
+      isAuthenticated: state.isAuthenticated,
+    })
+  );
 
   return {
     ...state,
