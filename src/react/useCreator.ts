@@ -22,16 +22,26 @@ interface UseCreatorState {
 }
 
 interface UseCreatorActions {
-  fetchCreator: (creatorId: string) => Promise<Creator | null>;
-  fetchProfile: (username: string) => Promise<CreatorProfile | null>;
+  fetchCreator: (creatorId: string) => Creator | null | Promise<Creator | null>;
+  fetchProfile: (username: string) => CreatorProfile | null | Promise<CreatorProfile | null>;
   createCreator: (data: CreateCreatorRequest) => Promise<Creator | null>;
   updateCreator: (creatorId: string, data: UpdateCreatorRequest) => Promise<Creator | null>;
   clearError: () => void;
 }
 
+export interface UseCreatorOptions {
+  useSuspense?: boolean;
+}
+
+interface CreatorSuspenseEntry {
+  data: Creator | null;
+  promise: Promise<Creator | null>;
+  resolved: boolean;
+}
+
+const creatorSuspenseCache = new Map<string, CreatorSuspenseEntry>();
+
 /**
- * Hook for managing creator profiles, identity fetching, and profile updates.
- *
  * @returns State and action handlers for creator operations
  *
  * @example
@@ -59,7 +69,10 @@ interface UseCreatorActions {
  * }
  * ```
  */
-export function useCreator(): UseCreatorState & UseCreatorActions {
+export { creatorSuspenseCache };
+
+export function useCreator(options: UseCreatorOptions = {}): UseCreatorState & UseCreatorActions {
+  const { useSuspense = false } = options;
   const { client, setError: setParentError } = useDorisio();
   const [state, setState] = useState<UseCreatorState>({
     creator: null,
@@ -80,63 +93,137 @@ export function useCreator(): UseCreatorState & UseCreatorActions {
   }, [setParentError]);
 
   const fetchCreator = useCallback(
-    async (creatorId: string): Promise<Creator | null> => {
-      setLoading(true);
-      setError(null);
-
-      try {
-        const response = await client.request('GET', `/creators/${creatorId}`, undefined, {
-          timeout: 10000,
-        });
-
-        if (response.success && response.data) {
-          setState((prev) => ({
-            ...prev,
-            creator: response.data as Creator,
-          }));
-          return response.data as Creator;
+    (creatorId: string): Creator | null | Promise<Creator | null> => {
+      if (useSuspense) {
+        const cached = creatorSuspenseCache.get(creatorId);
+        if (cached?.resolved) {
+          return cached.data;
+        }
+        if (cached?.promise && !cached.resolved) {
+          throw cached.promise;
         }
 
-        return null;
-      } catch (err) {
-        const error = err as ApiError;
-        setError(error);
-        return null;
-      } finally {
-        setLoading(false);
+        const responsePromise = client.request('GET', `/creators/${creatorId}`, undefined, {
+          timeout: 10000,
+        });
+        const entry: CreatorSuspenseEntry = {
+          data: null,
+          promise: null as unknown as Promise<Creator | null>,
+          resolved: false,
+        };
+        const dataPromise = responsePromise.then(
+          (response) => {
+            const data = response.success && response.data ? (response.data as Creator) : null;
+            entry.resolved = true;
+            entry.data = data;
+            return data;
+          },
+          () => {
+            entry.resolved = true;
+            entry.data = null;
+            return null;
+          }
+        );
+        entry.promise = dataPromise;
+        creatorSuspenseCache.set(creatorId, entry);
+        throw dataPromise;
       }
+
+      return (async () => {
+        setLoading(true);
+        setError(null);
+
+        try {
+          const response = await client.request('GET', `/creators/${creatorId}`, undefined, {
+            timeout: 10000,
+          });
+
+          if (response.success && response.data) {
+            setState((prev) => ({
+              ...prev,
+              creator: response.data as Creator,
+            }));
+            return response.data as Creator;
+          }
+
+          return null;
+        } catch (err) {
+          const error = err as ApiError;
+          setError(error);
+          return null;
+        } finally {
+          setLoading(false);
+        }
+      })();
     },
-    [client, setError, setLoading]
+    [client, setError, setLoading, useSuspense]
   );
 
   const fetchProfile = useCallback(
-    async (username: string): Promise<CreatorProfile | null> => {
-      setLoading(true);
-      setError(null);
-
-      try {
-        const response = await client.request('GET', `/creators/profile/${username}`, undefined, {
-          timeout: 10000,
-        });
-
-        if (response.success && response.data) {
-          setState((prev) => ({
-            ...prev,
-            profile: response.data as CreatorProfile,
-          }));
-          return response.data as CreatorProfile;
+    (username: string): CreatorProfile | null | Promise<CreatorProfile | null> => {
+      if (useSuspense) {
+        const cached = creatorSuspenseCache.get(`profile:${username}`);
+        if (cached?.resolved) {
+          return cached.data as CreatorProfile | null;
+        }
+        if (cached?.promise && !cached.resolved) {
+          throw cached.promise;
         }
 
-        return null;
-      } catch (err) {
-        const error = err as ApiError;
-        setError(error);
-        return null;
-      } finally {
-        setLoading(false);
+        const responsePromise = client.request('GET', `/creators/profile/${username}`, undefined, {
+          timeout: 10000,
+        });
+        const entry: CreatorSuspenseEntry = {
+          data: null,
+          promise: null as unknown as Promise<CreatorProfile | null>,
+          resolved: false,
+        };
+        const dataPromise = responsePromise.then(
+          (response) => {
+            const data = response.success && response.data ? (response.data as CreatorProfile) : null;
+            entry.resolved = true;
+            entry.data = data;
+            return data;
+          },
+          () => {
+            entry.resolved = true;
+            entry.data = null;
+            return null;
+          }
+        );
+        entry.promise = dataPromise;
+        creatorSuspenseCache.set(`profile:${username}`, entry);
+        throw dataPromise;
       }
+
+      return (async () => {
+        setLoading(true);
+        setError(null);
+
+        try {
+          const response = await client.request('GET', `/creators/profile/${username}`, undefined, {
+            timeout: 10000,
+          });
+
+          if (response.success && response.data) {
+            setState((prev) => ({
+              ...prev,
+              profile: response.data as CreatorProfile,
+            }));
+            return response.data as CreatorProfile;
+          }
+
+          return null;
+        } catch (err) {
+          const error = err as ApiError;
+          setError(error);
+          return null;
+        } finally {
+          setLoading(false);
+        }
+      })();
     },
-    [client, setError, setLoading]
+    [client, setError, setLoading, useSuspense]
   );
 
   const createCreator = useCallback(
