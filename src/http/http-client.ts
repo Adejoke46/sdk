@@ -110,6 +110,12 @@ export interface HttpClientOptions {
   schemas?: ValidationSchemas;
   timeout?: number;
   retryAttempts?: number;
+  /** Base delay in ms for exponential backoff retries (default 1000). */
+  retryBaseDelayMs?: number;
+  /** Maximum delay in ms cap for exponential backoff retries (default 30000). */
+  retryMaxDelayMs?: number;
+  /** Add 0–100 ms jitter to retry backoffs to avoid thundering herds (default false). */
+  retryJitter?: boolean;
   headers?: Record<string, string>;
   /**
    * `sandbox` bypasses fetch and returns deterministic mocks.
@@ -295,6 +301,9 @@ export class HttpClient {
   private defaultHeaders: Record<string, string>;
   private timeout: number;
   private retryAttempts: number;
+  private retryBaseDelayMs: number;
+  private retryMaxDelayMs: number;
+  private retryJitter: boolean;
   private interceptors: InterceptorManager;
   private mode: 'live' | 'sandbox';
   private mockRouter: MockRouter;
@@ -336,6 +345,9 @@ export class HttpClient {
     this.baseUrl = baseUrl.replace(/\/$/, '');
     this.timeout = options?.timeout || 30000;
     this.retryAttempts = options?.retryAttempts || 3;
+    this.retryBaseDelayMs = options?.retryBaseDelayMs ?? 1000;
+    this.retryMaxDelayMs = options?.retryMaxDelayMs ?? 30000;
+    this.retryJitter = options?.retryJitter ?? false;
     this.defaultHeaders = {
       'Content-Type': 'application/json',
       ...options?.headers,
@@ -407,6 +419,20 @@ export class HttpClient {
     if (options?.circuitBreaker) {
       this.circuitBreaker = new CircuitBreaker(options.circuitBreaker);
     }
+  }
+
+  /**
+   * Compute the exponential backoff delay for a retry attempt.
+   *
+   * `delay = min(retryBaseDelayMs * 2 ^ attempt, retryMaxDelayMs)` with an
+   * optional additive 0–100 ms jitter to avoid synchronized retries.
+   */
+  private computeRetryDelay(attempt: number): number {
+    let delay = this.retryBaseDelayMs * Math.pow(2, attempt);
+    if (this.retryJitter) {
+      delay += Math.floor(Math.random() * 101);
+    }
+    return Math.max(0, Math.round(Math.min(delay, this.retryMaxDelayMs)));
   }
 
   /**
@@ -990,7 +1016,7 @@ export class HttpClient {
             const action = await this.errorHandler(lastError, context);
 
             if (action.action === 'retry') {
-              const delay = action.delayMs ?? Math.pow(2, attempt) * 1000;
+              const delay = action.delayMs ?? this.computeRetryDelay(attempt);
               if (attempt < attempts - 1) {
                 await new Promise((resolve) => setTimeout(resolve, delay));
                 continue;
@@ -1020,7 +1046,7 @@ export class HttpClient {
         }
 
         if (attempt < attempts - 1) {
-          await new Promise((resolve) => setTimeout(resolve, Math.pow(2, attempt) * 1000));
+          await new Promise((resolve) => setTimeout(resolve, this.computeRetryDelay(attempt)));
         }
       } finally {
         release?.();
