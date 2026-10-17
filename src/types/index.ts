@@ -62,6 +62,7 @@ export type {
   ErrorHandler,
   ErrorHandlerAction,
   ErrorHandlerContext,
+  RateLimitMetadata,
   Middleware,
   MiddlewareContext,
 } from './errors';
