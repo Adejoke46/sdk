@@ -80,6 +80,8 @@ export type {
 } from './types/validation';
 export { CacheManager } from './cache/cache-manager';
 export type { CacheOptions, CacheStats, CacheStrategy } from './types/cache';
+export { Http2PushManager } from './http/http2-push';
+export type { Http2PushConfig, PushedResourceEntry } from './http/http2-push';
 export { RequestQueue, type RequestQueueOptions } from './http/request-queue';
 export { PriorityRequestQueue, type PriorityRequestQueueOptions } from './queue/request-queue';
 export type { QueueConfig, QueueStats, RequestPriority } from './types/queue';
@@ -90,6 +92,14 @@ export {
   type ConnectionPoolOptions,
   type ConnectionPoolStats,
 } from './http/connection-pool';
+export {
+  SocketManager,
+  type SocketManagerOptions,
+  type SocketManagerStats,
+  type SocketEntry,
+  type SocketState,
+  type SocketLike,
+} from './http/socket-manager';
 export {
   OfflineQueue,
   type OfflineQueueOptions,

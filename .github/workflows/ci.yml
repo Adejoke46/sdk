@@ -32,6 +32,9 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      - name: Lint React hooks
+        run: npx eslint -c .eslintrc.override.json src/react/
+
       - name: Type check
         run: npm run type-check
 
