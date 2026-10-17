@@ -39,6 +39,7 @@ import { validateSchema } from '../validation/schema-validator';
 import type { ValidationSchemas } from '../types/validation';
 import { prepareRequestBody, type RequestCompressionConfig } from './compress';
 import { createHttpError } from './error-factory';
+import { Http2PushManager, type Http2PushConfig } from './http2-push';
 
 export type HttpClientMode = 'live' | 'sandbox' | 'production';
 
@@ -175,6 +176,13 @@ export interface HttpClientOptions {
    * `priority`. Takes precedence over the legacy `enableRequestQueue` flag.
    */
   queue?: QueueConfig;
+  /**
+   * HTTP/2 server push configuration. When enabled and HTTP/2 is available,
+   * pushed resources are cached and consumed on subsequent requests.
+   * HTTP/2 is never enforced; it is only used when available.
+   * Set to `false` to disable push support entirely.
+   */
+  http2Push?: Http2PushConfig | false;
 }
 
 export interface ProxyConfig {
@@ -326,6 +334,7 @@ export class HttpClient {
   private throttleManager?: ThrottleManager;
   private hookManager?: HookManager;
   private proxy?: ProxyConfig;
+  private http2PushManager?: Http2PushManager;
   private onResponse?: (response: Response) => void;
   private compression?: RequestCompressionConfig;
   private streamHandler: StreamHandler;
@@ -403,6 +412,10 @@ export class HttpClient {
     this.onResponse = options?.onResponse;
     this.compression = options?.compress;
     this.streamHandler = new StreamHandler();
+
+    if (options?.http2Push !== false) {
+      this.http2PushManager = new Http2PushManager(options?.http2Push);
+    }
 
     if (options?.circuitBreaker) {
       this.circuitBreaker = new CircuitBreaker(options.circuitBreaker);
@@ -497,6 +510,13 @@ export class HttpClient {
 
   getCacheManager(): CacheManager {
     return this.cacheManager;
+  }
+
+  /**
+   * Get the HTTP/2 push manager instance, if HTTP/2 push is enabled.
+   */
+  getHttp2PushManager(): Http2PushManager | undefined {
+    return this.http2PushManager;
   }
 
   /**
@@ -809,6 +829,15 @@ export class HttpClient {
    */
   private async sendWithRetries<T>(path: string, options: RequestOptions): Promise<T> {
     const url = `${this.baseUrl}${path}`;
+
+    // Consume HTTP/2 pushed resource if available, avoiding a network request
+    if (this.http2PushManager?.isEnabled()) {
+      const pushed = this.http2PushManager.consumePushedResource(url);
+      if (pushed !== undefined) {
+        return pushed as T;
+      }
+    }
+
     let headers = { ...this.defaultHeaders, ...options.headers };
     const serializedBody = options.body ? this.serializer.serialize(options.body) : undefined;
     let requestBody: BodyInit | undefined;
