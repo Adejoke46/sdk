@@ -11,7 +11,13 @@ import type { CacheOptions } from '../types/cache';
 import type { QueueConfig, QueueStats, RequestPriority } from '../types/queue';
 import { CacheManager } from '../cache/cache-manager';
 import { InterceptorManager } from './interceptors';
-import { generateRequestId, isRequestIdempotent, RetryConflictError } from './retry-manager';
+import {
+  generateRequestId,
+  isRequestIdempotent,
+  RetryConflictError,
+  RetryManager,
+  waitForRetry,
+} from './retry-manager';
 import { CircuitBreaker, type CircuitBreakerConfig, CircuitOpenError } from './circuit-breaker';
 import { parseCacheControl, ttlFromCacheControl } from './cache-control';
 import { MockRouter, type SandboxHistoryEntry } from '../sandbox/mock-router';
@@ -36,7 +42,7 @@ import {
   type MonitoringConfig,
 } from '../lib/metrics';
 import { ThrottleManager } from './throttle-manager';
-import { HookManager, type HookContext, type ResponseContext } from '../lib/hooks';
+import { HookManager, type HookContext } from '../lib/hooks';
 import {
   StreamHandler,
   type StreamOptions,
@@ -222,21 +228,6 @@ function isAuthEndpoint(path: string): boolean {
 function hasHeader(headers: Record<string, string>, name: string): boolean {
   const target = name.toLowerCase();
   return Object.keys(headers).some((key) => key.toLowerCase() === target);
-}
-
-/**
- * Attach the logical request id to the outgoing headers so retries and server
- * logs can be correlated. Callers who set their own `X-Request-Id` or `X-Request-ID` win.
- */
-function withRequestIdHeader(
-  headers: Record<string, string> | undefined,
-  requestId: string
-): Record<string, string> {
-  const next: Record<string, string> = { ...headers };
-  if (!hasHeader(next, 'x-request-id')) {
-    next['X-Request-Id'] = requestId;
-  }
-  return next;
 }
 
 /** Return a header value without requiring callers to match its casing. */
@@ -664,12 +655,15 @@ export class HttpClient {
           ...options,
           requestId,
           correlationId,
-          headers: withCorrelationIdHeader(
-            withRequestIdHeader(options.headers, requestId),
-            correlationId
-          ),
+          headers: options.headers,
         };
         const finalOptions = await this.interceptors.executeRequestInterceptors(seeded);
+        const requestHeaders = buildHeaders({
+          defaultHeaders: this.defaultHeaders,
+          headers: finalOptions.headers,
+          requestId: finalOptions.requestId,
+          correlationId: finalOptions.correlationId,
+        });
         const schemas = finalOptions.schemas ?? this.schemas;
         if (
           schemas?.request &&
@@ -697,7 +691,7 @@ export class HttpClient {
         const cacheMethod = finalOptions.methodName ?? finalOptions.method;
         const cacheBaseParams = finalOptions.cacheParams ?? [path, finalOptions.body ?? null];
         const cacheHeaders = Object.fromEntries(
-          Object.entries({ ...this.defaultHeaders, ...finalOptions.headers })
+          Object.entries(requestHeaders)
             .filter(([header]) => {
               const normalizedHeader = header.toLowerCase();
               return normalizedHeader !== 'x-request-id' && normalizedHeader !== 'x-correlation-id';
@@ -873,7 +867,7 @@ export class HttpClient {
   /**
    * Retry loop for a single attempt to reach the API.
    *
-   * Client errors are never retried. Server-side failures are retried only for
+   * Client errors other than 429 are never retried. Failures are retried only for
    * idempotent requests, so a POST that may already have been applied is not
    * replayed unless the caller opted in with `isIdempotent` or an
    * `Idempotency-Key` header.
@@ -910,9 +904,6 @@ export class HttpClient {
       method: options.method,
       headers,
       body: requestBody,
-      signal: options.signal
-        ? AbortSignal.any([options.signal, AbortSignal.timeout(options.timeout ?? this.timeout)])
-        : AbortSignal.timeout(options.timeout ?? this.timeout),
     };
 
     // Select a proxy (round-robin) and apply bypass rules + proxy headers.
@@ -947,6 +938,11 @@ export class HttpClient {
     let interceptedError: unknown;
     let hasInterceptedError = false;
     const attempts = options.retries ?? this.retryAttempts;
+    const retryManager = new RetryManager({
+      initialDelayMs: this.retryBaseDelayMs,
+      maxDelayMs: this.retryMaxDelayMs,
+      jitter: this.retryJitter,
+    });
     const canRetry = isRequestIdempotent({
       method: options.method,
       isIdempotent: options.isIdempotent,
@@ -966,6 +962,9 @@ export class HttpClient {
           attempt: attempt + 1,
           requestId: options.requestId,
         });
+        fetchOptions.signal = options.signal
+          ? AbortSignal.any([options.signal, AbortSignal.timeout(options.timeout ?? this.timeout)])
+          : AbortSignal.timeout(options.timeout ?? this.timeout);
         const response = await fetch(url, fetchOptions);
         this.recordResponseCorrelationId(response, options.correlationId);
         options.onResponse?.(response);
@@ -997,24 +996,11 @@ export class HttpClient {
               // ignore
             }
           }
-          let retryAfter: number | undefined;
-          if (retryAfterHeader) {
-            const parsedSeconds = Number(retryAfterHeader);
-            if (!Number.isNaN(parsedSeconds)) {
-              retryAfter = parsedSeconds;
-            } else {
-              const parsedDate = Date.parse(retryAfterHeader);
-              if (!Number.isNaN(parsedDate)) {
-                retryAfter = Math.max(0, Math.ceil((parsedDate - Date.now()) / 1000));
-              }
-            }
-          }
           throw createHttpError({
             status: response.status,
             body: error,
             requestId: options.requestId,
             headers: response.headers,
-            retryAfter,
           });
         }
 
@@ -1041,6 +1027,8 @@ export class HttpClient {
 
         return { data, headers: responseHeadersToRecord(response.headers) };
       } catch (error) {
+        release?.();
+        release = undefined;
         lastError = error instanceof Error ? error : new Error(String(error));
         if (lastError instanceof DorisioError && !lastError.requestId && options.requestId) {
           lastError.requestId = options.requestId;
@@ -1058,6 +1046,11 @@ export class HttpClient {
           throw interceptedError;
         }
 
+        const retryDelay =
+          lastError instanceof DorisioError && lastError.statusCode === 429
+            ? retryManager.calculateDelay(attempt, lastError)
+            : this.computeRetryDelay(attempt);
+
         // Call custom error handler if registered
         if (this.errorHandler && lastError instanceof DorisioError) {
           const context: ErrorHandlerContext = {
@@ -1069,6 +1062,7 @@ export class HttpClient {
             requestId: options.requestId,
           };
 
+          let action;
           try {
             const action = await this.errorHandler(lastError, context);
 
@@ -1089,13 +1083,24 @@ export class HttpClient {
             // If error handler itself fails, log and continue with normal error handling
             this.logger('[DORISIO] error handler failed', { error: handlerError });
           }
+          if (action?.action === 'retry') {
+            if (attempt < attempts - 1) {
+              await waitForRetry(action.delayMs ?? retryDelay, options.signal);
+              continue;
+            }
+          } else if (action?.action === 'fallback') {
+            return action.fallbackValue as T;
+          } else if (action?.action === 'throw' && lastError.statusCode === 429) {
+            throw interceptedError;
+          }
         }
 
         if (
-          error instanceof ApiError &&
+          error instanceof DorisioError &&
           error.statusCode !== undefined &&
           error.statusCode >= 400 &&
-          error.statusCode < 500
+          error.statusCode < 500 &&
+          error.statusCode !== 429
         ) {
           throw interceptedError;
         }
@@ -1106,7 +1111,7 @@ export class HttpClient {
         }
 
         if (attempt < attempts - 1) {
-          await new Promise((resolve) => setTimeout(resolve, this.computeRetryDelay(attempt)));
+          await waitForRetry(retryDelay, options.signal);
         }
       } finally {
         release?.();
@@ -1283,11 +1288,11 @@ export class HttpClient {
     };
     options.signal?.addEventListener('abort', onExternalAbort, { once: true });
 
-    const headers: Record<string, string> = {
-      ...this.defaultHeaders,
-      ...options.headers,
-      'X-Request-Id': requestId,
-    };
+    const headers = buildHeaders({
+      defaultHeaders: this.defaultHeaders,
+      headers: options.headers,
+      requestId,
+    });
 
     const timeoutMs = options.timeout ?? this.timeout;
     const signal = controller.signal;
@@ -1458,10 +1463,10 @@ export class HttpClient {
     try {
       // Build full URL
       const url = `${this.baseUrl}${path}`;
-      const headers = {
-        ...this.defaultHeaders,
-        ...options.headers,
-      };
+      const headers = buildHeaders({
+        defaultHeaders: this.defaultHeaders,
+        headers: options.headers,
+      });
 
       // Make the actual fetch request
       const response = await fetch(url, {

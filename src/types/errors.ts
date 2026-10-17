@@ -98,11 +98,18 @@ export class ValidationError extends DorisioError {
  */
 export class RateLimitError extends DorisioError {
   public readonly retryAfter?: number;
+  public readonly rateLimit?: RateLimitMetadata;
 
-  constructor(message: string, retryAfter?: number, requestId?: string) {
+  constructor(
+    message: string,
+    retryAfter?: number,
+    requestId?: string,
+    rateLimit?: RateLimitMetadata
+  ) {
     super(message, 429, 'RATE_LIMITED', requestId, true);
     this.name = 'RateLimitError';
     this.retryAfter = retryAfter;
+    this.rateLimit = rateLimit;
   }
 }
 
@@ -193,22 +200,33 @@ export type Middleware = (
   next: () => Promise<unknown>
 ) => Promise<unknown>;
 
+export interface RateLimitMetadata {
+  limit?: number;
+  remaining?: number;
+  /** Unix timestamp in seconds from X-RateLimit-Reset. */
+  reset?: number;
+}
+
 /**
  * Legacy error classes (for backward compatibility)
  */
 export class ApiError extends DorisioError {
+  /** Server-requested wait duration in seconds. */
   public readonly retryAfter?: number;
+  public readonly rateLimit?: RateLimitMetadata;
 
   constructor(
     message: string,
     statusCode?: number,
     code?: string,
     retryAfter?: number,
-    requestId?: string
+    requestId?: string,
+    rateLimit?: RateLimitMetadata
   ) {
     super(message, statusCode, code, requestId);
     this.name = 'ApiError';
     this.retryAfter = retryAfter;
+    this.rateLimit = rateLimit;
   }
 }
 

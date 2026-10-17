@@ -6,7 +6,6 @@
 
 import {
   DorisioError,
-  ApiError,
   AuthError,
   ValidationError,
   NotFoundError,
@@ -16,6 +15,7 @@ import {
   TimeoutError,
 } from '../types/errors';
 import { isValidationError } from '../lib/errors/type-guards';
+import { parseRateLimitHeaders } from './retry-manager';
 
 export interface ErrorResponse {
   error?: string;
@@ -28,7 +28,7 @@ export interface ErrorFactoryOptions {
   status: number;
   body?: ErrorResponse | string | null;
   requestId?: string;
-  headers?: Record<string, string>;
+  headers?: Headers | Record<string, string>;
 }
 
 export class ApiErrorFactory {
@@ -50,7 +50,7 @@ export class ApiErrorFactory {
     status: number,
     response?: ErrorResponse | string | null,
     requestId?: string,
-    headers?: Record<string, string>
+    headers?: Headers | Record<string, string>
   ): DorisioError {
     const body = this.normalizeBody(response);
     const message = body?.error || body?.message || this.defaultMessage(status);
@@ -72,8 +72,10 @@ export class ApiErrorFactory {
       case 408:
         return new TimeoutError(message, undefined, requestId);
       case 429: {
-        const retryAfter = this.parseRetryAfter(headers);
-        return new RateLimitError(message, retryAfter, requestId);
+        const { retryAfter, rateLimit } = parseRateLimitHeaders(
+          headers ? new Headers(headers) : undefined
+        );
+        return new RateLimitError(message, retryAfter, requestId, rateLimit);
       }
       default:
         if (status >= 500 && status < 600) {
@@ -157,34 +159,6 @@ export class ApiErrorFactory {
     return response;
   }
 
-  private static parseRetryAfter(headers?: Record<string, string>): number | undefined {
-    if (!headers) {
-      return undefined;
-    }
-
-    const raw =
-      headers['retry-after'] ??
-      headers['Retry-After'] ??
-      headers['Retry-After'];
-
-    if (!raw) {
-      return undefined;
-    }
-
-    const parsed = Number(raw);
-    if (Number.isFinite(parsed) && parsed >= 0) {
-      return parsed;
-    }
-
-    const date = Date.parse(raw);
-    if (!Number.isNaN(date)) {
-      const delta = Math.max(0, Math.ceil((date - Date.now()) / 1000));
-      return delta;
-    }
-
-    return undefined;
-  }
-
   private static defaultMessage(status: number): string {
     switch (status) {
       case 400:
@@ -203,4 +177,13 @@ export class ApiErrorFactory {
         return status >= 500 ? 'Server error' : 'API error';
     }
   }
+}
+
+export function createHttpError(options: ErrorFactoryOptions): DorisioError {
+  return ApiErrorFactory.fromHttpError(
+    options.status,
+    options.body,
+    options.requestId,
+    options.headers
+  );
 }
