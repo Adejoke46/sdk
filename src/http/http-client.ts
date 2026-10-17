@@ -12,6 +12,7 @@ import type { QueueConfig, QueueStats, RequestPriority } from '../types/queue';
 import { CacheManager } from '../cache/cache-manager';
 import { InterceptorManager } from './interceptors';
 import { generateRequestId, isRequestIdempotent, RetryConflictError } from './retry-manager';
+import { buildHeaders } from './header-builder';
 import { CircuitBreaker, type CircuitBreakerConfig, CircuitOpenError } from './circuit-breaker';
 import { MockRouter, type SandboxHistoryEntry } from '../sandbox/mock-router';
 import { RequestQueue } from './request-queue';
@@ -210,38 +211,11 @@ function hasHeader(headers: Record<string, string>, name: string): boolean {
   return Object.keys(headers).some((key) => key.toLowerCase() === target);
 }
 
-/**
- * Attach the logical request id to the outgoing headers so retries and server
- * logs can be correlated. Callers who set their own `X-Request-Id` or `X-Request-ID` win.
- */
-function withRequestIdHeader(
-  headers: Record<string, string> | undefined,
-  requestId: string
-): Record<string, string> {
-  const next: Record<string, string> = { ...headers };
-  if (!hasHeader(next, 'x-request-id')) {
-    next['X-Request-Id'] = requestId;
-  }
-  return next;
-}
-
 /** Return a header value without requiring callers to match its casing. */
 function getHeader(headers: Record<string, string> | undefined, name: string): string | undefined {
   const target = name.toLowerCase();
   const entry = Object.entries(headers ?? {}).find(([key]) => key.toLowerCase() === target);
   return entry?.[1];
-}
-
-/** Attach the tracing id unless the caller explicitly supplied one. */
-function withCorrelationIdHeader(
-  headers: Record<string, string> | undefined,
-  correlationId: string | undefined
-): Record<string, string> {
-  const next: Record<string, string> = { ...headers };
-  if (correlationId && !hasHeader(next, 'x-correlation-id')) {
-    next['X-Correlation-ID'] = correlationId;
-  }
-  return next;
 }
 
 function stableSerialize(value: unknown): string {
@@ -599,12 +573,15 @@ export class HttpClient {
           ...options,
           requestId,
           correlationId,
-          headers: withCorrelationIdHeader(
-            withRequestIdHeader(options.headers, requestId),
-            correlationId
-          ),
+          headers: options.headers,
         };
         const finalOptions = await this.interceptors.executeRequestInterceptors(seeded);
+        const requestHeaders = buildHeaders({
+          defaultHeaders: this.defaultHeaders,
+          headers: finalOptions.headers,
+          requestId: finalOptions.requestId,
+          correlationId: finalOptions.correlationId,
+        });
         const schemas = finalOptions.schemas ?? this.schemas;
         if (
           schemas?.request &&
@@ -632,7 +609,7 @@ export class HttpClient {
         const cacheMethod = finalOptions.methodName ?? finalOptions.method;
         const cacheBaseParams = finalOptions.cacheParams ?? [path, finalOptions.body ?? null];
         const cacheHeaders = Object.fromEntries(
-          Object.entries({ ...this.defaultHeaders, ...finalOptions.headers })
+          Object.entries(requestHeaders)
             .filter(([header]) => {
               const normalizedHeader = header.toLowerCase();
               return normalizedHeader !== 'x-request-id' && normalizedHeader !== 'x-correlation-id';
@@ -809,7 +786,12 @@ export class HttpClient {
    */
   private async sendWithRetries<T>(path: string, options: RequestOptions): Promise<T> {
     const url = `${this.baseUrl}${path}`;
-    let headers = { ...this.defaultHeaders, ...options.headers };
+    let headers = buildHeaders({
+      defaultHeaders: this.defaultHeaders,
+      headers: options.headers,
+      requestId: options.requestId,
+      correlationId: options.correlationId,
+    });
     const serializedBody = options.body ? this.serializer.serialize(options.body) : undefined;
     let requestBody: BodyInit | undefined;
     if (serializedBody !== undefined) {
@@ -1168,11 +1150,11 @@ export class HttpClient {
     };
     options.signal?.addEventListener('abort', onExternalAbort, { once: true });
 
-    const headers: Record<string, string> = {
-      ...this.defaultHeaders,
-      ...options.headers,
-      'X-Request-Id': requestId,
-    };
+    const headers = buildHeaders({
+      defaultHeaders: this.defaultHeaders,
+      headers: options.headers,
+      requestId,
+    });
 
     const timeoutMs = options.timeout ?? this.timeout;
     const signal = controller.signal;
@@ -1343,10 +1325,10 @@ export class HttpClient {
     try {
       // Build full URL
       const url = `${this.baseUrl}${path}`;
-      const headers = {
-        ...this.defaultHeaders,
-        ...options.headers,
-      };
+      const headers = buildHeaders({
+        defaultHeaders: this.defaultHeaders,
+        headers: options.headers,
+      });
 
       // Make the actual fetch request
       const response = await fetch(url, {
