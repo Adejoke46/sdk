@@ -3,7 +3,11 @@
  * Tests for wallet management hook — including finally-block guarantees.
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import React from 'react';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { renderHook, act, waitFor, cleanup } from '@testing-library/react';
+import { DorisioProvider } from './DorisioProvider';
+import { useWallet, type UseWalletOptions } from './useWallet';
 
 describe('useWallet Hook', () => {
   let mockClient: ReturnType<typeof buildMockClient>;
@@ -38,6 +42,11 @@ describe('useWallet Hook', () => {
     mockClient = buildMockClient();
     setIsLoading = vi.fn();
     setError = vi.fn();
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
   });
 
   // ─── generateNonce ────────────────────────────────────────────────────────
@@ -347,6 +356,231 @@ describe('useWallet Hook', () => {
       expect(state.selectedWallet?.id).toBe('w1');
       expect(state.nonce).toBe('abc');
       expect(state.challengeStep).toBe('nonce-generated');
+    });
+  });
+
+  // ─── realtime balance updates ─────────────────────────────────────────────
+
+  function buildRealtimeClient() {
+    const unsubscribe = vi.fn();
+    return {
+      request: vi.fn(),
+      subscribeRealtime: vi.fn(() => unsubscribe),
+      getRealtime: vi.fn(() => null),
+      enableRealtime: vi.fn().mockResolvedValue(undefined),
+      disableRealtime: vi.fn(),
+      unsubscribe,
+    };
+  }
+
+  function renderUseWallet(client: any, initialOptions: UseWalletOptions = {}) {
+    const Wrapper = ({ children }: { children: React.ReactNode }) =>
+      React.createElement(DorisioProvider, { client, config: {} as any, children });
+    return renderHook(({ realtime }: { realtime?: boolean }) => useWallet({ realtime }), {
+      initialProps: { realtime: initialOptions.realtime },
+      wrapper: Wrapper,
+    });
+  }
+
+  describe('realtime balance updates', () => {
+    let client: ReturnType<typeof buildRealtimeClient>;
+
+    beforeEach(() => {
+      client = buildRealtimeClient();
+    });
+
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it('subscribes to the balance channel when realtime is true', async () => {
+      renderUseWallet(client, { realtime: true });
+
+      await waitFor(() => {
+        expect(client.subscribeRealtime).toHaveBeenCalledWith('balance', expect.any(Function));
+      });
+    });
+
+    it('does not subscribe when realtime is false', async () => {
+      renderUseWallet(client, { realtime: false });
+
+      await waitFor(() => {
+        expect(client.subscribeRealtime).not.toHaveBeenCalled();
+      });
+      expect(client.enableRealtime).not.toHaveBeenCalled();
+    });
+
+    it('does not subscribe when realtime is not provided (opt-in)', async () => {
+      renderUseWallet(client);
+
+      await waitFor(() => {
+        expect(client.subscribeRealtime).not.toHaveBeenCalled();
+      });
+    });
+
+    it('updates wallet balance when a balance event arrives (matched by walletId)', async () => {
+      const { result } = renderUseWallet(client, { realtime: true });
+
+      await waitFor(() => {
+        expect(client.subscribeRealtime).toHaveBeenCalled();
+      });
+
+      const listener = client.subscribeRealtime.mock.calls[0][1];
+      act(() => {
+        listener({
+          data: {
+            walletId: 'wallet-1',
+            balance: { available: 2000, pending: 100, total: 2100 },
+            timestamp: 1_000_000,
+          },
+        });
+      });
+
+      expect(result.current.balances['wallet-1']).toEqual({
+        available: 2000,
+        pending: 100,
+        total: 2100,
+      });
+      expect(result.current.lastRealtimeUpdate).toBe(1_000_000);
+    });
+
+    it('updates wallet balance when matched by publicKey', async () => {
+      const { result } = renderUseWallet(client, { realtime: true });
+
+      await waitFor(() => {
+        expect(client.subscribeRealtime).toHaveBeenCalled();
+      });
+
+      const listener = client.subscribeRealtime.mock.calls[0][1];
+      act(() => {
+        listener({
+          data: {
+            publicKey: 'GABC123',
+            balance: { available: 500, pending: 0, total: 500 },
+          },
+        });
+      });
+
+      expect(result.current.balances['wallet-1']).toBeUndefined();
+      expect(result.current.lastRealtimeUpdate).toBeDefined();
+    });
+
+    it('does not update state after unmount', async () => {
+      const { result, unmount } = renderUseWallet(client, { realtime: true });
+
+      await waitFor(() => {
+        expect(client.subscribeRealtime).toHaveBeenCalled();
+      });
+
+      const listener = client.subscribeRealtime.mock.calls[0][1];
+      unmount();
+
+      act(() => {
+        listener({
+          data: {
+            walletId: 'wallet-1',
+            balance: { available: 999, pending: 0, total: 999 },
+          },
+        });
+      });
+
+      expect(result.current.balances['wallet-1']).toBeUndefined();
+    });
+
+    it('unsubscribes from the channel on unmount', async () => {
+      const { unmount } = renderUseWallet(client, { realtime: true });
+
+      await waitFor(() => {
+        expect(client.subscribeRealtime).toHaveBeenCalled();
+      });
+
+      unmount();
+
+      expect(client.unsubscribe).toHaveBeenCalled();
+    });
+
+    it('does not leak a subscription after unmount (subscribes once)', async () => {
+      const { unmount } = renderUseWallet(client, { realtime: true });
+
+      await waitFor(() => {
+        expect(client.subscribeRealtime).toHaveBeenCalledTimes(1);
+      });
+
+      const listener = client.subscribeRealtime.mock.calls[0][1];
+      unmount();
+
+      act(() => {
+        listener({
+          data: {
+            walletId: 'wallet-1',
+            balance: { available: 1, pending: 0, total: 1 },
+          },
+        });
+      });
+
+      expect(client.subscribeRealtime).toHaveBeenCalledTimes(1);
+      expect(client.unsubscribe).toHaveBeenCalled();
+    });
+
+    it('enables realtime via enableRealtime when the socket is not yet enabled', async () => {
+      client.getRealtime.mockReturnValueOnce(null);
+      renderUseWallet(client, { realtime: true });
+
+      await waitFor(() => {
+        expect(client.enableRealtime).toHaveBeenCalled();
+      });
+    });
+
+    it('does not call enableRealtime when realtime is already enabled', async () => {
+      client.getRealtime.mockReturnValue({} as any);
+      renderUseWallet(client, { realtime: true });
+
+      await waitFor(() => {
+        expect(client.subscribeRealtime).toHaveBeenCalled();
+      });
+
+      expect(client.enableRealtime).not.toHaveBeenCalled();
+    });
+
+    it('re-subscribes when realtime is toggled off then on', async () => {
+      const { rerender } = renderUseWallet(client, { realtime: true });
+
+      await waitFor(() => {
+        expect(client.subscribeRealtime).toHaveBeenCalledTimes(1);
+      });
+
+      rerender({ realtime: false });
+      expect(client.unsubscribe).toHaveBeenCalled();
+
+      rerender({ realtime: true });
+      await waitFor(() => {
+        expect(client.subscribeRealtime).toHaveBeenCalledTimes(2);
+      });
+    });
+
+    it('records balance events keyed by wallet id', async () => {
+      const { result } = renderUseWallet(client, { realtime: true });
+
+      await waitFor(() => {
+        expect(client.subscribeRealtime).toHaveBeenCalled();
+      });
+
+      const listener = client.subscribeRealtime.mock.calls[0][1];
+      act(() => {
+        listener({
+          data: {
+            walletId: 'unknown-wallet',
+            balance: { available: 5, pending: 0, total: 5 },
+          },
+        });
+      });
+
+      expect(result.current.balances['unknown-wallet']).toEqual({
+        available: 5,
+        pending: 0,
+        total: 5,
+      });
+      expect(result.current.loading).toBe(false);
     });
   });
 });

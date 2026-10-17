@@ -23,6 +23,8 @@ export interface UseWalletState {
   nonce?: string;
   challengeStep:
     'idle' | 'nonce-generated' | 'challenge-ready' | 'verifying' | 'verified' | 'error';
+  balances: Record<string, { available: number; pending: number; total: number }>;
+  lastRealtimeUpdate?: number;
 }
 
 export interface UseWalletActions {
@@ -35,6 +37,18 @@ export interface UseWalletActions {
   renameWallet: (walletId: string, name: string) => Promise<Wallet>;
   getBalance: (walletId: string) => Promise<{ available: number; pending: number; total: number }>;
   reset: () => void;
+}
+
+export interface UseWalletOptions {
+  /** When true, subscribes to WebSocket balance events to keep wallet balances in sync. */
+  realtime?: boolean;
+}
+
+interface WalletBalanceEvent {
+  walletId?: string;
+  publicKey?: string;
+  balance: { available: number; pending: number; total: number };
+  timestamp?: number;
 }
 
 /**
@@ -69,17 +83,20 @@ export interface UseWalletActions {
  * }
  * ```
  */
-export function useWallet(): UseWalletState & UseWalletActions {
+export function useWallet(options: UseWalletOptions = {}): UseWalletState & UseWalletActions {
   const { client, setError, setIsLoading } = useDorisio();
+  const { realtime = false } = options;
 
   const [state, setState] = useState<UseWalletState>({
     wallets: [],
     loading: false,
     challengeStep: 'idle',
+    balances: {},
   });
 
   const isMountedRef = useRef(true);
   const abortControllersRef = useRef<Set<AbortController>>(new Set());
+  const realtimeSubscriptionRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -96,14 +113,6 @@ export function useWallet(): UseWalletState & UseWalletActions {
   const stateRef = useRef(state);
   stateRef.current = state;
 
-  const withAbort = <T>(fn: (signal: AbortSignal) => Promise<T>): Promise<T> => {
-    const controller = new AbortController();
-    abortControllersRef.current.add(controller);
-    return fn(controller.signal).finally(() => {
-      abortControllersRef.current.delete(controller);
-    });
-  };
-
   // Functional update that also mirrors the result into stateRef, so helpers never read a stale snapshot.
   const update = useCallback((fn: (s: UseWalletState) => UseWalletState): void => {
     if (!isMountedRef.current) return;
@@ -113,6 +122,68 @@ export function useWallet(): UseWalletState & UseWalletActions {
       return next;
     });
   }, []);
+
+  useEffect(() => {
+    if (!realtime) {
+      const unsubscribe = realtimeSubscriptionRef.current;
+      realtimeSubscriptionRef.current = null;
+      if (unsubscribe) unsubscribe();
+      return;
+    }
+
+    let mounted = true;
+
+    const setup = async (): Promise<void> => {
+      try {
+        if (!client.getRealtime()) {
+          await client.enableRealtime();
+        }
+      } catch {
+        return;
+      }
+      if (!mounted) return;
+
+      const unsubscribe = client.subscribeRealtime<WalletBalanceEvent>('balance', (event) => {
+        if (!isMountedRef.current || !mounted) return;
+        const { walletId, publicKey, balance, timestamp } = event.data;
+        update((s) => {
+          const nextWallets = s.wallets.map((w) => {
+            const matches =
+              (walletId && w.id === walletId) || (publicKey && w.publicKey === publicKey);
+            if (!matches) return w;
+            return { ...w, balance };
+          });
+          const nextBalances = { ...s.balances };
+          if (walletId) nextBalances[walletId] = balance;
+          return {
+            ...s,
+            wallets: nextWallets,
+            balances: nextBalances,
+            lastRealtimeUpdate: timestamp ?? Date.now(),
+          };
+        });
+      });
+      realtimeSubscriptionRef.current = unsubscribe;
+    };
+
+    setup();
+
+    return () => {
+      mounted = false;
+      const unsubscribe = realtimeSubscriptionRef.current;
+      realtimeSubscriptionRef.current = null;
+      if (unsubscribe) unsubscribe();
+    };
+  }, [realtime, client, update]);
+
+  const withAbort = <T>(fn: (signal: AbortSignal) => Promise<T>): Promise<T> => {
+    const controller = new AbortController();
+    abortControllersRef.current.add(controller);
+    return fn(controller.signal).finally(() => {
+      abortControllersRef.current.delete(controller);
+    });
+  };
+
   const begin = useCallback(
     (extra: Partial<UseWalletState> = {}) =>
       () => update((s) => ({ ...s, loading: true, error: undefined, ...extra })),
@@ -410,6 +481,7 @@ export function useWallet(): UseWalletState & UseWalletActions {
       wallets: [],
       loading: false,
       challengeStep: 'idle',
+      balances: {},
     };
     setState(initial);
     stateRef.current = initial;

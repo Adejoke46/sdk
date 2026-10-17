@@ -15,7 +15,7 @@ export {
   type ErrorState,
 } from './DorisioProvider';
 export { useCreateTip, type UseCreateTipState, type UseCreateTipActions } from './useCreateTip';
-export { useWallet, type UseWalletState, type UseWalletActions } from './useWallet';
+export { useWallet, type UseWalletState, type UseWalletActions, type UseWalletOptions } from './useWallet';
 export {
   useCreatorBalance,
   type UseCreatorBalanceState,
