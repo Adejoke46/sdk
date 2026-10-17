@@ -10,10 +10,11 @@
  *   `setState` and mirrored in `stateRef` so helpers never read a stale snapshot.
  */
 
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useState, useCallback, useRef, useEffect, useDebugValue } from 'react';
 import { useDorisio } from './DorisioProvider';
 import { Wallet } from '../types/models';
 import { runSafely } from './safe-async';
+import { formatDebugValue } from './debug-format';
 
 export interface UseWalletState {
   wallets: Wallet[];
@@ -31,31 +32,50 @@ export interface UseWalletActions {
   generateNonce: (publicKey: string) => Promise<{ nonce: string; expiresIn: number }>;
   getChallenge: (nonce: string) => Promise<string>;
   verifyWallet: (publicKey: string, nonce: string, signedTransaction: string) => Promise<Wallet>;
-  listWallets: (includeBalance?: boolean) => Promise<Wallet[]>;
+  listWallets: (includeBalance?: boolean) => Wallet[] | null | Promise<Wallet[] | null>;
   selectWallet: (wallet: Wallet) => void;
   unlinkWallet: (walletId: string) => Promise<void>;
   renameWallet: (walletId: string, name: string) => Promise<Wallet>;
-  getBalance: (walletId: string) => Promise<{ available: number; pending: number; total: number }>;
+  getBalance: (
+    walletId: string
+  ) =>
+    | { available: number; pending: number; total: number }
+    | null
+    | Promise<{ available: number; pending: number; total: number } | null>;
   reset: () => void;
 }
 
 export interface UseWalletOptions {
-  /** When true, subscribes to WebSocket balance events to keep wallet balances in sync. */
-  realtime?: boolean;
+  useSuspense?: boolean;
 }
 
-interface WalletBalanceEvent {
-  walletId?: string;
-  publicKey?: string;
-  balance: { available: number; pending: number; total: number };
-  timestamp?: number;
+interface ListWalletsSuspenseEntry {
+  data: Wallet[] | null;
+  promise: Promise<Wallet[] | null>;
+  resolved: boolean;
 }
+
+interface GetBalanceSuspenseEntry {
+  data: { available: number; pending: number; total: number } | null;
+  promise: Promise<{ available: number; pending: number; total: number } | null>;
+  resolved: boolean;
+}
+
+const listWalletsSuspenseCache = new Map<string, ListWalletsSuspenseEntry>();
+const getBalanceSuspenseCache = new Map<string, GetBalanceSuspenseEntry>();
 
 /**
  * Hook for managing user wallets, challenge-response verification with Stellar/Freighter,
  * and fetching wallet balances.
  *
  * @returns State and action handlers for wallet management
+ *
+ * @debugValue Displays `{ loading, error, challengeStep, walletsCount, selectedWallet }` in React DevTools.
+ *   - `loading` (boolean): whether a request is in flight
+ *   - `error` (string | undefined): last error message, if any
+ *   - `challengeStep` (string): current challenge-response flow step
+ *   - `walletsCount` (number): number of linked wallets
+ *   - `selectedWallet` (string | undefined): public key of the selected wallet, if any
  *
  * @example
  * ```tsx
@@ -83,7 +103,10 @@ interface WalletBalanceEvent {
  * }
  * ```
  */
+export { listWalletsSuspenseCache, getBalanceSuspenseCache };
+
 export function useWallet(options: UseWalletOptions = {}): UseWalletState & UseWalletActions {
+  const { useSuspense = false } = options;
   const { client, setError, setIsLoading } = useDorisio();
   const { realtime = false } = options;
 
@@ -323,8 +346,8 @@ export function useWallet(options: UseWalletOptions = {}): UseWalletState & UseW
     [client, setError, setIsLoading, begin, failStep, update]
   );
 
-  const listWallets = useCallback(
-    (includeBalance = false): Promise<Wallet[]> =>
+  const listWalletsTask = useCallback(
+    (includeBalance: boolean): Promise<Wallet[]> =>
       runSafely(
         { setError, setIsLoading },
         {
@@ -359,6 +382,62 @@ export function useWallet(options: UseWalletOptions = {}): UseWalletState & UseW
           })
       ),
     [client, setError, setIsLoading, begin, fail, update]
+  );
+
+  const listWallets = useCallback(
+    (includeBalance = false): Wallet[] | null | Promise<Wallet[] | null> => {
+      if (useSuspense) {
+        const key = `list:${includeBalance}`;
+        let entry = listWalletsSuspenseCache.get(key);
+        if (entry?.resolved) {
+          return entry.data;
+        }
+        if (entry?.promise && !entry.resolved) {
+          throw entry.promise;
+        }
+
+        const base = withAbort(async (signal) => {
+          const query = includeBalance ? '?includeBalance=true' : '';
+          const response = await client.request<{ wallets?: Wallet[] } | Wallet[]>(
+            'GET',
+            `/api/v1/wallet/list${query}`,
+            undefined,
+            { signal }
+          );
+
+          if (!response.success || !response.data) {
+            throw new Error(response.error?.message || 'Failed to list wallets');
+          }
+
+          const data = response.data;
+          const wallets: Wallet[] = Array.isArray(data)
+            ? data
+            : ((data as { wallets?: Wallet[] }).wallets ?? []);
+
+          return wallets;
+        });
+
+        entry = { data: null, promise: null as unknown as Promise<Wallet[] | null>, resolved: false };
+        const promise = base.then(
+          (data) => {
+            entry.resolved = true;
+            entry.data = data;
+            return data;
+          },
+          () => {
+            entry.resolved = true;
+            entry.data = null;
+            return null;
+          }
+        );
+        entry.promise = promise;
+        listWalletsSuspenseCache.set(key, entry);
+        throw promise;
+      }
+
+      return listWalletsTask(includeBalance);
+    },
+    [useSuspense, listWalletsTask]
   );
 
   const selectWallet = useCallback((wallet: Wallet) => {
@@ -446,7 +525,7 @@ export function useWallet(options: UseWalletOptions = {}): UseWalletState & UseW
     [client, setError, setIsLoading, begin, fail, update]
   );
 
-  const getBalance = useCallback(
+  const getBalanceTask = useCallback(
     (walletId: string): Promise<{ available: number; pending: number; total: number }> =>
       runSafely(
         { setError, setIsLoading },
@@ -476,6 +555,58 @@ export function useWallet(options: UseWalletOptions = {}): UseWalletState & UseW
     [client, setError, setIsLoading, begin, fail, update]
   );
 
+  const getBalance = useCallback(
+    (walletId: string): { available: number; pending: number; total: number } | null | Promise<{ available: number; pending: number; total: number } | null> => {
+      if (useSuspense) {
+        let entry = getBalanceSuspenseCache.get(walletId);
+        if (entry?.resolved) {
+          return entry.data as { available: number; pending: number; total: number };
+        }
+        if (entry?.promise && !entry.resolved) {
+          throw entry.promise as Promise<{ available: number; pending: number; total: number }>;
+        }
+
+        const base = withAbort(async (signal) => {
+          const response = await client.request<{
+            available: number;
+            pending: number;
+            total: number;
+          }>('GET', `/api/v1/wallet/${walletId}/balance`, undefined, { signal });
+
+          if (!response.success || !response.data) {
+            throw new Error(response.error?.message || 'Failed to fetch balance');
+          }
+
+          return response.data;
+        });
+
+        entry = {
+          data: null,
+          promise: null as unknown as Promise<{ available: number; pending: number; total: number } | null>,
+          resolved: false,
+        };
+        const promise = base.then(
+          (data) => {
+            entry.resolved = true;
+            entry.data = data;
+            return data;
+          },
+          () => {
+            entry.resolved = true;
+            entry.data = null;
+            return null;
+          }
+        );
+        entry.promise = promise;
+        getBalanceSuspenseCache.set(walletId, entry);
+        throw promise;
+      }
+
+      return getBalanceTask(walletId);
+    },
+    [useSuspense, getBalanceTask]
+  );
+
   const reset = useCallback(() => {
     const initial: UseWalletState = {
       wallets: [],
@@ -486,6 +617,16 @@ export function useWallet(options: UseWalletOptions = {}): UseWalletState & UseW
     setState(initial);
     stateRef.current = initial;
   }, []);
+
+  useDebugValue(
+    formatDebugValue({
+      loading: state.loading,
+      error: state.error,
+      challengeStep: state.challengeStep,
+      walletsCount: state.wallets.length,
+      selectedWallet: state.selectedWallet?.publicKey,
+    })
+  );
 
   return {
     ...state,

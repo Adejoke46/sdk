@@ -12,10 +12,11 @@
  *   so they never capture stale closures or form circular dep loops with state.
  */
 
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useRef, useDebugValue } from 'react';
 import { useDorisio } from './DorisioProvider';
-import { logRejection, runSafely } from './safe-async';
+import { getErrorMessage, logRejection, runSafely } from './safe-async';
 import { Transaction } from '../types/models';
+import { formatDebugValue } from './debug-format';
 
 export interface TransactionHistoryOptions {
   page?: number;
@@ -27,7 +28,10 @@ export interface UseTransactionHistoryState {
   total: number;
   page: number;
   pageSize: number;
+  cursor?: string;
+  hasNextPage: boolean;
   loading: boolean;
+  isLoadingMore: boolean;
   error?: string;
   lastUpdated?: number;
 }
@@ -39,6 +43,7 @@ export interface UseTransactionHistoryActions {
   prevPage: () => Promise<void>;
   setPageSize: (size: number) => Promise<void>;
   refetch: () => Promise<void>;
+  loadMore: () => Promise<Transaction[]>;
   reset: () => void;
 }
 
@@ -47,6 +52,14 @@ export interface UseTransactionHistoryActions {
  *
  * Manages transaction history with built-in pagination support.
  * Can fetch user's tip history or creator's received tips.
+ *
+ * @debugValue Displays `{ loading, error, transactionsCount, page, pageSize, total }` in React DevTools.
+ *   - `loading` (boolean): whether a request is in flight
+ *   - `error` (string | undefined): last error message, if any
+ *   - `transactionsCount` (number): number of transactions on the current page
+ *   - `page` (number): current page number
+ *   - `pageSize` (number): items per page
+ *   - `total` (number): total number of transactions available
  *
  * @example
  * ```tsx
@@ -84,7 +97,10 @@ export function useTransactionHistory(
     total: 0,
     page: initialOptions?.page || 1,
     pageSize: initialOptions?.pageSize || 10,
+    cursor: undefined,
+    hasNextPage: false,
     loading: false,
+    isLoadingMore: false,
   });
 
   const [creatorId, setCreatorId] = useState<string | undefined>();
@@ -126,6 +142,7 @@ export function useTransactionHistory(
   // and starting a new fetch aborts the previous in-flight request.
   const requestIdRef = useRef(0);
   const abortRef = useRef<AbortController | null>(null);
+  const loadingMoreRef = useRef(false);
 
   // Trailing debounce for setPageSize so rapid successive calls collapse
   // into a single fetch for the latest size; all callers share the outcome.
@@ -134,6 +151,92 @@ export function useTransactionHistory(
     resolve: () => void;
     reject: (err: unknown) => void;
   }>>([]);
+
+  // Core page fetch shared by `fetchHistory` and `loadMore`. Handles request
+  // cancellation / staleness (Issue #26) and applies a single page of results.
+  // `append` appends instead of replacing. `setLoading` toggles `loading`
+  // (fetchHistory yes; loadMore owns `isLoadingMore` itself).
+  const fetchPage = useCallback(
+    async (
+      opts: { page?: number; pageSize?: number; append?: boolean },
+      creator: string | undefined,
+      setLoading: boolean
+    ): Promise<Transaction[]> => {
+      // Claim this fetch's generation up front and cancel whatever is
+      // still in flight — its response (or abort error) is stale by
+      // definition and must never touch state.
+      const requestId = ++requestIdRef.current;
+      abortRef.current?.abort();
+      const controller = new AbortController();
+      abortRef.current = controller;
+      abortControllersRef.current.add(controller);
+      const isStale = () => requestId !== requestIdRef.current;
+
+      const current = stateRef.current;
+      const page = opts.page ?? current.page;
+      const pageSize = opts.pageSize ?? current.pageSize;
+      // Explicit `undefined` clears creator filter; omit to keep last creatorId.
+      const resolvedCreator = creator !== undefined ? creator : creatorIdRef.current;
+      const endpoint = resolvedCreator
+        ? `/api/v1/transactions/creator/${resolvedCreator}`
+        : '/api/v1/transactions/history';
+      const query = `?page=${page}&pageSize=${pageSize}`;
+
+      let response;
+      try {
+        response = await client.request('GET', `${endpoint}${query}`, undefined, {
+          signal: controller.signal,
+        });
+      } catch (err) {
+        if (controller.signal.aborted && !isMountedRef.current) {
+          throw err;
+        }
+        // A superseded request's failure (including its own abort) is
+        // not an error — silently keep current state.
+        if (isStale()) return stateRef.current.transactions;
+        throw err;
+      } finally {
+        abortControllersRef.current.delete(controller);
+      }
+      if (isMountedRef.current && isStale()) return stateRef.current.transactions;
+
+      if (!response.success || !response.data) {
+        throw new Error(response.error?.message || 'Failed to fetch transaction history');
+      }
+
+      const d = response.data as {
+        tips?: unknown[];
+        transactions?: unknown[];
+        total?: number;
+        page?: number;
+        pageSize?: number;
+        cursor?: string;
+        hasNextPage?: boolean;
+      };
+      const transactions = (d.tips ?? d.transactions ?? []) as Transaction[];
+      const append = opts.append === true;
+      setState((s) => ({
+        ...s,
+        transactions: append ? [...s.transactions, ...transactions] : transactions,
+        total: d.total ?? (append ? s.total : 0),
+        page: d.page ?? page,
+        pageSize: d.pageSize ?? pageSize,
+        cursor: d.cursor ?? undefined,
+        hasNextPage: d.hasNextPage ?? !!d.cursor,
+        ...(setLoading ? { loading: false } : {}),
+        lastUpdated: Date.now(),
+      }));
+
+      const nextOptions = { page, pageSize };
+      setLastOptions(nextOptions);
+      lastOptionsRef.current = nextOptions;
+      setCreatorId(resolvedCreator);
+      creatorIdRef.current = resolvedCreator;
+
+      return transactions;
+    },
+    [client]
+  );
 
   const fetchHistory = useCallback(
     (options?: TransactionHistoryOptions, creator?: string): Promise<Transaction[]> =>
@@ -146,77 +249,41 @@ export function useTransactionHistory(
           onError: (error) => safeSetState((s) => ({ ...s, error, loading: false })),
           isMounted: () => isMountedRef.current,
         },
-        async () => {
-          // Claim this fetch's generation up front and cancel whatever is
-          // still in flight — its response (or abort error) is stale by
-          // definition and must never touch state.
-          const requestId = ++requestIdRef.current;
-          abortRef.current?.abort();
-          const controller = new AbortController();
-          abortRef.current = controller;
-          abortControllersRef.current.add(controller);
-          const isStale = () => requestId !== requestIdRef.current;
-
-            const current = stateRef.current;
-            const page = options?.page ?? current.page;
-            const pageSize = options?.pageSize ?? current.pageSize;
-            // Explicit `undefined` clears creator filter; omit to keep last creatorId.
-            const resolvedCreator = creator !== undefined ? creator : creatorIdRef.current;
-            const endpoint = resolvedCreator
-              ? `/api/v1/transactions/creator/${resolvedCreator}`
-              : '/api/v1/transactions/history';
-            const query = `?page=${page}&pageSize=${pageSize}`;
-
-          let response;
-          try {
-            response = await client.request('GET', `${endpoint}${query}`, undefined, {
-              signal: controller.signal,
-            });
-          } catch (err) {
-            if (controller.signal.aborted && !isMountedRef.current) {
-              throw err;
-            }
-            // A superseded request's failure (including its own abort) is
-            // not an error — silently keep current state.
-            if (isStale()) return stateRef.current.transactions;
-            throw err;
-          } finally {
-            abortControllersRef.current.delete(controller);
-          }
-          if (isMountedRef.current && isStale()) return stateRef.current.transactions;
-
-          if (!response.success || !response.data) {
-            throw new Error(response.error?.message || 'Failed to fetch transaction history');
-          }
-
-          const d = response.data as {
-            tips?: unknown[];
-            transactions?: unknown[];
-            total?: number;
-            page?: number;
-            pageSize?: number;
-          };
-          const transactions = (d.tips ?? d.transactions ?? []) as Transaction[];
-          setState((s) => ({
-            ...s,
-            transactions,
-            total: d.total ?? 0,
-            page: d.page ?? page,
-            pageSize: d.pageSize ?? pageSize,
-            lastUpdated: Date.now(),
-            loading: false,
-          }));
-
-          const nextOptions = { page, pageSize };
-          setLastOptions(nextOptions);
-          lastOptionsRef.current = nextOptions;
-          setCreatorId(resolvedCreator);
-          creatorIdRef.current = resolvedCreator;
-
-          return transactions;
-        }),
-    [client, setError, setIsLoading, safeSetState]
+        async () => fetchPage({ page: options?.page, pageSize: options?.pageSize }, creator, true)
+      ),
+    [setError, setIsLoading, safeSetState, fetchPage]
   );
+
+  /**
+   * Load the next page of transactions and append it to the current list.
+   * Uses the cursor stored from the previous response to signal pagination.
+   * Returns the newly fetched transactions (never replaces existing ones).
+   */
+  const loadMore = useCallback(async (): Promise<Transaction[]> => {
+    const current = stateRef.current;
+    if (loadingMoreRef.current || !current.cursor || !current.hasNextPage) {
+      return current.transactions;
+    }
+    loadingMoreRef.current = true;
+    safeSetState((s) => ({ ...s, isLoadingMore: true, error: undefined }));
+    try {
+      return await fetchPage(
+        { page: current.page + 1, pageSize: current.pageSize, append: true },
+        creatorIdRef.current,
+        false
+      );
+    } catch (err) {
+      safeSetState((s) => ({
+        ...s,
+        error: getErrorMessage(err, 'Failed to load more transactions'),
+        isLoadingMore: false,
+      }));
+      throw err;
+    } finally {
+      loadingMoreRef.current = false;
+      safeSetState((s) => ({ ...s, isLoadingMore: false }));
+    }
+  }, [fetchPage, safeSetState]);
 
   const goToPage = useCallback(
     async (page: number): Promise<void> => {
@@ -276,7 +343,10 @@ export function useTransactionHistory(
       total: 0,
       page: 1,
       pageSize: 10,
+      cursor: undefined,
+      hasNextPage: false,
       loading: false,
+      isLoadingMore: false,
     };
     safeSetState(initial);
     stateRef.current = initial;
@@ -286,6 +356,7 @@ export function useTransactionHistory(
     }
     creatorIdRef.current = undefined;
     lastOptionsRef.current = undefined;
+    loadingMoreRef.current = false;
   }, [safeSetState]);
 
   const initialPage = initialOptions?.page;
@@ -311,6 +382,17 @@ export function useTransactionHistory(
     []
   );
 
+  useDebugValue(
+    formatDebugValue({
+      loading: state.loading,
+      error: state.error,
+      transactionsCount: state.transactions.length,
+      page: state.page,
+      pageSize: state.pageSize,
+      total: state.total,
+    })
+  );
+
   return {
     ...state,
     fetchHistory,
@@ -319,6 +401,7 @@ export function useTransactionHistory(
     prevPage,
     setPageSize,
     refetch,
+    loadMore,
     reset,
   };
 }
