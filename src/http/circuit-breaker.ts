@@ -118,7 +118,7 @@ export class CircuitBreaker {
   /** Throws a CircuitBreakerOpenError if the circuit is open. */
   assertCanAttempt(key: string): void {
     if (!this.canAttempt(key)) {
-      throw new CircuitBreakerOpenError(key, this.remainingResetTime(key));
+      throw new CircuitOpenError(key, this.remainingResetTime(key));
     }
   }
 

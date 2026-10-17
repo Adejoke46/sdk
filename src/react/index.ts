@@ -15,7 +15,12 @@ export {
   type ErrorState,
 } from './DorisioProvider';
 export { useCreateTip, type UseCreateTipState, type UseCreateTipActions } from './useCreateTip';
-export { useWallet, type UseWalletState, type UseWalletActions } from './useWallet';
+export {
+  useWallet,
+  type UseWalletState,
+  type UseWalletActions,
+  type UseWalletOptions,
+} from './useWallet';
 export {
   useCreatorBalance,
   type UseCreatorBalanceState,
@@ -26,16 +31,5 @@ export {
   type UseTransactionHistoryState,
   type UseTransactionHistoryActions,
 } from './useTransactionHistory';
-export { useCreator } from './useCreator';
-export { useUser } from './useUser';
-export {
-  renderWithDorisio,
-  createMockClient,
-  waitForHookResult,
-  type RenderWithDorisioOptions,
-  type RenderWithDorisioReturn,
-  type CreateMockClientOptions,
-  type CreateMockClientReturn,
-  type WaitForHookResultOptions,
-  type MockRequest,
-} from './__mocks__/test-utils';
+export { useCreator, type UseCreatorOptions } from './useCreator';
+export { useUser, type UseUserOptions } from './useUser';
