@@ -11,7 +11,7 @@
  * Always `await` the actions inside try/catch (or `.catch()`) in event handlers.
  */
 
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useState, useCallback, useRef, useEffect, useDebugValue } from 'react';
 import { useDorisio } from './DorisioProvider';
 import { Transaction } from '../types/models';
 import { runSafely } from './safe-async';
@@ -21,6 +21,7 @@ import type {
   BuildTransactionResponse,
   SubmitTransactionResponse,
 } from '../client/transactions';
+import { formatDebugValue } from './debug-format';
 
 export interface UseCreateTipState {
   data?: Transaction;
@@ -50,6 +51,13 @@ export interface UseCreateTipActions {
  * Hook for orchestrating the complete tip payment flow (create, build, submit, confirm).
  *
  * @returns State and action handlers for the tipping lifecycle
+ *
+ * @debugValue Displays `{ loading, submitting, step, error, dataId }` in React DevTools.
+ *   - `loading` (boolean): whether any request is in flight
+ *   - `submitting` (boolean): whether a transaction is being submitted
+ *   - `step` (string): current tip lifecycle step (idle, creating, building, submitting, confirming, success, error)
+ *   - `error` (string | undefined): last error message, if any
+ *   - `dataId` (string | undefined): id of the created/confirmed transaction, if any
  *
  * @example
  * ```tsx
@@ -314,6 +322,16 @@ export function useCreateTip(): UseCreateTipState & UseCreateTipActions {
       step: 'idle',
     });
   }, [safeSetState]);
+
+  useDebugValue(
+    formatDebugValue({
+      loading: state.loading,
+      submitting: state.submitting,
+      step: state.step,
+      error: state.error,
+      dataId: state.data?.id,
+    })
+  );
 
   return {
     ...state,

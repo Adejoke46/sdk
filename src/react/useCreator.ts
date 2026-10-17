@@ -4,7 +4,7 @@
  * Hook for creator-related operations.
  */
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useDebugValue } from 'react';
 import {
   Creator,
   CreatorProfile,
@@ -13,6 +13,7 @@ import {
 } from '../types/models';
 import { ApiError } from '../types/errors';
 import { useDorisio } from './DorisioProvider';
+import { formatDebugValue } from './debug-format';
 
 interface UseCreatorState {
   creator: Creator | null;
@@ -43,6 +44,12 @@ const creatorSuspenseCache = new Map<string, CreatorSuspenseEntry>();
 
 /**
  * @returns State and action handlers for creator operations
+ *
+ * @debugValue Displays `{ loading, error, creator, profile }` in React DevTools.
+ *   - `loading` (boolean): whether a request is in flight
+ *   - `error` (string | null): last error message, if any
+ *   - `creator` (object | null): { id, username } of the current creator, or null
+ *   - `profile` (object | null): { username, bio } of the creator profile, or null
  *
  * @example
  * ```tsx
@@ -289,6 +296,15 @@ export function useCreator(options: UseCreatorOptions = {}): UseCreatorState & U
   const clearError = useCallback(() => {
     setError(null);
   }, [setError]);
+
+  useDebugValue(
+    formatDebugValue({
+      loading: state.loading,
+      error: state.error?.message ?? null,
+      creator: state.creator ? { id: state.creator.id, username: state.creator.username } : null,
+      profile: state.profile ? { username: state.profile.username, bio: state.profile.bio } : null,
+    })
+  );
 
   return {
     ...state,
