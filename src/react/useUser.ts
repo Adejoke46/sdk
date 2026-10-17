@@ -18,11 +18,23 @@ interface UseUserState {
 }
 
 interface UseUserActions {
-  fetchUser: (userId: string) => Promise<User | null>;
-  fetchCurrentUser: () => Promise<User | null>;
+  fetchUser: (userId: string) => User | null | Promise<User | null>;
+  fetchCurrentUser: () => User | null | Promise<User | null>;
   updateUser: (userId: string, data: UpdateUserRequest) => Promise<User | null>;
   clearError: () => void;
 }
+
+export interface UseUserOptions {
+  useSuspense?: boolean;
+}
+
+interface UserSuspenseEntry {
+  data: User | null;
+  promise: Promise<User | null>;
+  resolved: boolean;
+}
+
+const userSuspenseCache = new Map<string, UserSuspenseEntry>();
 
 /**
  * Hook for managing authenticated user profile, fan profile fetching, and profile updates.
@@ -53,7 +65,10 @@ interface UseUserActions {
  * }
  * ```
  */
-export function useUser(): UseUserState & UseUserActions {
+export { userSuspenseCache };
+
+export function useUser(options: UseUserOptions = {}): UseUserState & UseUserActions {
+  const { useSuspense = false } = options;
   const { client, setError: setParentError } = useDorisio();
   const [state, setState] = useState<UseUserState>({
     user: null,
@@ -75,12 +90,114 @@ export function useUser(): UseUserState & UseUserActions {
   }, [setParentError]);
 
   const fetchUser = useCallback(
-    async (userId: string): Promise<User | null> => {
+    (userId: string): User | null | Promise<User | null> => {
+      if (useSuspense) {
+        const cached = userSuspenseCache.get(userId);
+        if (cached?.resolved) {
+          return cached.data;
+        }
+        if (cached?.promise && !cached.resolved) {
+          throw cached.promise;
+        }
+
+        const responsePromise = client.request('GET', `/users/${userId}`, undefined, {
+          timeout: 10000,
+        });
+        const entry: UserSuspenseEntry = {
+          data: null,
+          promise: null as unknown as Promise<User | null>,
+          resolved: false,
+        };
+        const dataPromise = responsePromise.then(
+          (response) => {
+            const data = response.success && response.data ? (response.data as User) : null;
+            entry.resolved = true;
+            entry.data = data;
+            return data;
+          },
+          () => {
+            entry.resolved = true;
+            entry.data = null;
+            return null;
+          }
+        );
+        entry.promise = dataPromise;
+        userSuspenseCache.set(userId, entry);
+        throw dataPromise;
+      }
+
+      return (async () => {
+        setLoading(true);
+        setError(null);
+
+        try {
+          const response = await client.request('GET', `/users/${userId}`, undefined, {
+            timeout: 10000,
+          });
+
+          if (response.success && response.data) {
+            setState((prev) => ({
+              ...prev,
+              user: response.data as User,
+            }));
+            return response.data as User;
+          }
+
+          return null;
+        } catch (err) {
+          const error = err as ApiError;
+          setError(error);
+          return null;
+        } finally {
+          setLoading(false);
+        }
+      })();
+    },
+    [client, setError, setLoading, useSuspense]
+  );
+
+  const fetchCurrentUser = useCallback((): User | null | Promise<User | null> => {
+    if (useSuspense) {
+      const cached = userSuspenseCache.get('current');
+      if (cached?.resolved) {
+        return cached.data;
+      }
+      if (cached?.promise && !cached.resolved) {
+        throw cached.promise;
+      }
+
+      const responsePromise = client.request('GET', '/users/me', undefined, {
+        timeout: 10000,
+      });
+      const entry: UserSuspenseEntry = {
+        data: null,
+        promise: null as unknown as Promise<User | null>,
+        resolved: false,
+      };
+      const dataPromise = responsePromise.then(
+        (response) => {
+          const data = response.success && response.data ? (response.data as User) : null;
+          entry.resolved = true;
+          entry.data = data;
+          return data;
+        },
+        () => {
+          entry.resolved = true;
+          entry.data = null;
+          return null;
+        }
+      );
+      entry.promise = dataPromise;
+      userSuspenseCache.set('current', entry);
+      throw dataPromise;
+    }
+
+    return (async () => {
       setLoading(true);
       setError(null);
 
       try {
-        const response = await client.request('GET', `/users/${userId}`, undefined, {
+        const response = await client.request('GET', '/users/me', undefined, {
           timeout: 10000,
         });
 
@@ -88,6 +205,7 @@ export function useUser(): UseUserState & UseUserActions {
           setState((prev) => ({
             ...prev,
             user: response.data as User,
+            isAuthenticated: true,
           }));
           return response.data as User;
         }
@@ -96,42 +214,13 @@ export function useUser(): UseUserState & UseUserActions {
       } catch (err) {
         const error = err as ApiError;
         setError(error);
+        setState((prev) => ({ ...prev, isAuthenticated: false }));
         return null;
       } finally {
         setLoading(false);
       }
-    },
-    [client, setError, setLoading]
-  );
-
-  const fetchCurrentUser = useCallback(async (): Promise<User | null> => {
-    setLoading(true);
-    setError(null);
-
-    try {
-      const response = await client.request('GET', '/users/me', undefined, {
-        timeout: 10000,
-      });
-
-      if (response.success && response.data) {
-        setState((prev) => ({
-          ...prev,
-          user: response.data as User,
-          isAuthenticated: true,
-        }));
-        return response.data as User;
-      }
-
-      return null;
-    } catch (err) {
-      const error = err as ApiError;
-      setError(error);
-      setState((prev) => ({ ...prev, isAuthenticated: false }));
-      return null;
-    } finally {
-      setLoading(false);
-    }
-  }, [client, setError, setLoading]);
+    })();
+  }, [client, setError, setLoading, useSuspense]);
 
   const updateUser = useCallback(
     async (userId: string, data: UpdateUserRequest): Promise<User | null> => {
