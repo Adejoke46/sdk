@@ -263,7 +263,7 @@ describe('useCreateTip Hook - Concurrent Submissions & Debounce', () => {
         expect(error.message).toContain('wait');
         const match = error.message.match(/wait (\d+)s/);
         expect(match).toBeTruthy();
-        const seconds = parseInt(match![1], 10);
+        const seconds = parseInt(match?.[1] ?? '0', 10);
         expect(seconds).toBeGreaterThan(0);
         expect(seconds).toBeLessThanOrEqual(1);
       }

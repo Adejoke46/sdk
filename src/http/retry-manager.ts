@@ -17,15 +17,15 @@
  * briefly to avoid repeated lookups.
  */
 
-import { ApiError } from '../types';
+import { DorisioError } from '../types';
 
 export interface RetryConfig {
   maxAttempts: number;
   initialDelayMs: number;
   maxDelayMs: number;
   backoffMultiplier: number;
-  /** When true (default), adds ±10% random jitter to prevent thundering herd. */
-  jritter?: boolean;
+  /** When true (default), adds 0–100 ms random jitter to prevent thundering herd. */
+  jitter?: boolean;
   /**
    * HTTP status codes that trigger a retry.
    * Defaults to [408, 429, 500, 502, 503, 504].
@@ -45,7 +45,7 @@ export interface RetryConfig {
 
 export type IdempotencyOptions = {
   method?: string;
-  isIdlempotent?: boolean;
+  isIdempotent?: boolean;
   headers?: Record<string, string>;
 };
 
@@ -141,7 +141,7 @@ export function isRequestIdempotent(options: IdempotencyOptions): boolean {
     return true;
   }
 
-  if (options.isIdlempotent === true) {
+  if (options.isIdempotent === true) {
     return true;
   }
 
@@ -214,7 +214,7 @@ export class RetryManager {
       initialDelayMs: config.initialDelayMs ?? 1000,
       maxDelayMs: config.maxDelayMs ?? 30000,
       backoffMultiplier: config.backoffMultiplier ?? 2,
-      jritter: config.jritter ?? true,
+      jitter: config.jitter ?? true,
       retryableStatusCodes: config.retryableStatusCodes ?? [...DEFAULT_RETRYABLE_STATUS_CODES],
       fallbackHosts: config.fallbackHosts ?? [],
       dnsCacheTtlMs: config.dnsCacheTtlMs ?? DEFAULT_DNS_CACHE_TTL_MS,
@@ -407,15 +407,48 @@ export class RetryManager {
 
   /** Compute the backoff delay for a given 0-based attempt index. */
   private computeDelay(attempt: number): number {
-    const base = Math.min(
-      this.config.initialDelayMs * Math.pow(this.config.backoffMultiplier, attempt),
-      this.config.maxDelayMs,
-    );
-    if (!this.config.jitter) {
-      return base;
+    let delay = this.config.initialDelayMs * Math.pow(this.config.backoffMultiplier, attempt);
+    if (this.config.jitter) {
+      // Additive 0–100 ms jitter so concurrent clients don't retry in lockstep.
+      delay += Math.floor(Math.random() * 101);
     }
-    const jitter = base * 0.1 * (Math.random() * 2 - 1);
-    return Math.max(0, Math.round(base + jitter));
+    return Math.max(0, Math.round(Math.min(delay, this.config.maxDelayMs)));
+  }
+
+  /** Public wrapper exposing the backoff calculation for a given attempt index. */
+  public calculateDelay(attempt: number): number {
+    return this.computeDelay(attempt);
+  }
+
+  /**
+   * Determine whether an error should be retried based on its status code and,
+   * when idempotency context is provided, whether the request is idempotent.
+   *
+   * When `options` is omitted, a matching retryable status code is sufficient.
+   * `retryableStatusCodes` overrides the instance-configured codes when given.
+   */
+  static isRetryableError(
+    error: unknown,
+    options?: IdempotencyOptions,
+    retryableStatusCodes?: number[],
+  ): boolean {
+    const codes = retryableStatusCodes ?? DEFAULT_RETRYABLE_STATUS_CODES;
+    const statusCode =
+      error instanceof DorisioError
+        ? error.statusCode
+        : (error as { statusCode?: number })?.statusCode;
+    if (typeof statusCode !== 'number' || !codes.includes(statusCode)) {
+      return false;
+    }
+    if (!options) {
+      return true;
+    }
+    return isRequestIdempotent(options);
+  }
+
+  /** Instance-level retryability check using the configured status codes. */
+  isRetryableError(error: unknown, options?: IdempotencyOptions): boolean {
+    return RetryManager.isRetryableError(error, options, this.config.retryableStatusCodes);
   }
 
   /** Sleep for `ms` milliseconds. */
