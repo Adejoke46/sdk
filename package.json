@@ -32,8 +32,8 @@
     }
   },
   "scripts": {
-    "dev": "tsup --watch",
-    "build": "tsup",
+    "dev": "node init && tsup --watch",
+    "build": "node init && tsup",
     "lint": "eslint src --ext .ts,.tsx",
     "type-check": "tsc --noEmit",
     "format": "prettier --write src",

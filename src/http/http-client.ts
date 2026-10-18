@@ -19,6 +19,7 @@ import {
   waitForRetry,
 } from './retry-manager';
 import { CircuitBreaker, type CircuitBreakerConfig, CircuitOpenError } from './circuit-breaker';
+import { generateFingerprint, FingerprintCache } from './fingerprinter';
 import { parseCacheControl, ttlFromCacheControl } from './cache-control';
 import { MockRouter, type SandboxHistoryEntry } from '../sandbox/mock-router';
 import { RequestQueue } from './request-queue';
@@ -42,7 +43,7 @@ import {
   type MonitoringConfig,
 } from '../lib/metrics';
 import { ThrottleManager } from './throttle-manager';
-import { HookManager, type HookContext } from '../lib/hooks';
+import { HookManager, type HookContext, type ResponseContext } from '../lib/hooks';
 import {
   StreamHandler,
   type StreamOptions,
@@ -230,6 +231,21 @@ function hasHeader(headers: Record<string, string>, name: string): boolean {
   return Object.keys(headers).some((key) => key.toLowerCase() === target);
 }
 
+/**
+ * Attach the logical request id to the outgoing headers so retries and server
+ * logs can be correlated. Callers who set their own `X-Request-Id` or `X-Request-ID` win.
+ */
+function withRequestIdHeader(
+  headers: Record<string, string> | undefined,
+  requestId: string
+): Record<string, string> {
+  const next: Record<string, string> = { ...headers };
+  if (!hasHeader(next, 'x-request-id')) {
+    next['X-Request-Id'] = requestId;
+  }
+  return next;
+}
+
 /** Return a header value without requiring callers to match its casing. */
 function getHeader(headers: Record<string, string> | undefined, name: string): string | undefined {
   const target = name.toLowerCase();
@@ -334,6 +350,8 @@ export class HttpClient {
   private deduplicateRequests: boolean;
   private deduplicationWindow: number;
   private deduplicationCache = new Map<string, CachedRequest>();
+  private fingerprintCache: FingerprintCache;
+  private fingerprintWindow: number;
   private cacheManager: CacheManager;
   /** Explicitly configured default TTL (ms), if any. Wins over response max-age. */
   private cacheTtl: number | undefined;
@@ -357,6 +375,7 @@ export class HttpClient {
   private compression?: RequestCompressionConfig;
   private streamHandler: StreamHandler;
   private circuitBreaker?: CircuitBreaker;
+  private http2PushManager?: Http2PushManager;
 
   constructor(baseUrl: string, options?: HttpClientOptions) {
     this.schemas = options?.schemas;
@@ -381,6 +400,8 @@ export class HttpClient {
     this.logger = options?.logger ?? ((message, data) => console.debug(message, data));
     this.deduplicateRequests = options?.deduplicateRequests ?? true;
     this.deduplicationWindow = options?.deduplicationWindow ?? 1000;
+    this.fingerprintWindow = options?.deduplicationWindow ?? 60000;
+    this.fingerprintCache = new FingerprintCache(this.fingerprintWindow);
     this.cacheManager = new CacheManager(options?.cache);
     this.cacheTtl = options?.cache?.ttl;
     this.errorHandler = options?.errorHandler;
@@ -655,15 +676,13 @@ export class HttpClient {
           ...options,
           requestId,
           correlationId,
-          headers: options.headers,
+          headers: withCorrelationIdHeader(
+            withRequestIdHeader(options.headers, requestId),
+            correlationId
+          ),
         };
         const finalOptions = await this.interceptors.executeRequestInterceptors(seeded);
-        const requestHeaders = buildHeaders({
-          defaultHeaders: this.defaultHeaders,
-          headers: finalOptions.headers,
-          requestId: finalOptions.requestId,
-          correlationId: finalOptions.correlationId,
-        });
+        const requestHeaders = { ...this.defaultHeaders, ...finalOptions.headers };
         const schemas = finalOptions.schemas ?? this.schemas;
         if (
           schemas?.request &&
@@ -700,6 +719,7 @@ export class HttpClient {
         );
         const cacheParams = [...cacheBaseParams, cacheHeaders];
         const key = `${finalOptions.method}:${path}:${stableSerialize(finalOptions.body ?? null)}:${stableSerialize(cacheHeaders)}`;
+        const fingerprint = generateFingerprint({ ...finalOptions, method: finalOptions.method, path });
         const isCacheable = finalOptions.method === 'GET' && this.cacheManager.isEnabled();
 
         if (isCacheable) {
@@ -711,7 +731,7 @@ export class HttpClient {
           cacheStatus = 'miss';
         }
 
-        const result = await this.executeDeduplication<T>(key, async () => {
+        const result = await this.executeDeduplication<T>(key, fingerprint, async () => {
           let response: T;
           let responseHeaders: Record<string, string> = {};
           if (this.mode === 'sandbox') {
@@ -808,11 +828,15 @@ export class HttpClient {
     }
   }
 
-  private async executeDeduplication<T>(key: string, fn: () => Promise<T>): Promise<T> {
+  private async executeDeduplication<T>(key: string, fingerprint: string, fn: () => Promise<T>): Promise<T> {
     if (!this.deduplicateRequests) return fn();
     const existing = this.deduplicationCache.get(key);
     if (existing && existing.expiresAt > Date.now()) {
       return existing.promise as Promise<T>;
+    }
+    const fingerprintEntry = this.fingerprintCache.get(fingerprint);
+    if (fingerprintEntry && fingerprintEntry.expiresAt > Date.now()) {
+      return fingerprintEntry.promise as Promise<T>;
     }
     const promise = fn();
     const cachedRequest: CachedRequest = {
@@ -820,12 +844,15 @@ export class HttpClient {
       expiresAt: Date.now() + this.deduplicationWindow,
     };
     this.deduplicationCache.set(key, cachedRequest);
+    this.fingerprintCache.set(fingerprint, cachedRequest);
     promise.catch(() => {
       if (this.deduplicationCache.get(key) === cachedRequest) this.deduplicationCache.delete(key);
+      this.fingerprintCache.delete(fingerprint);
     });
     if (this.deduplicationWindow > 0) {
       setTimeout(() => {
         if (this.deduplicationCache.get(key) === cachedRequest) this.deduplicationCache.delete(key);
+        this.fingerprintCache.delete(fingerprint);
       }, this.deduplicationWindow);
     }
     return promise;
@@ -865,6 +892,21 @@ export class HttpClient {
   }
 
   /**
+   * Resolve the TTL (ms) to cache a response for, preferring an explicitly
+   * configured default, then the response's Cache-Control max-age.
+   */
+  private resolveResponseTtl(headers: Record<string, string>): number | undefined {
+    if (this.cacheTtl !== undefined) {
+      return this.cacheTtl;
+    }
+    const cacheControl = getHeader(headers, 'cache-control');
+    if (!cacheControl) {
+      return undefined;
+    }
+    return ttlFromCacheControl(parseCacheControl(cacheControl));
+  }
+
+  /**
    * Retry loop for a single attempt to reach the API.
    *
    * Client errors other than 429 are never retried. Failures are retried only for
@@ -877,26 +919,25 @@ export class HttpClient {
     headers: Record<string, string>;
   }> {
     const url = `${this.baseUrl}${path}`;
-
-    // Consume HTTP/2 pushed resource if available, avoiding a network request
-    if (this.http2PushManager?.isEnabled()) {
-      const pushed = this.http2PushManager.consumePushedResource(url);
-      if (pushed !== undefined) {
-        return pushed as T;
-      }
-    }
-
     let headers = { ...this.defaultHeaders, ...options.headers };
     const serializedBody = options.body ? this.serializer.serialize(options.body) : undefined;
-
-    if (this.compression?.enabled !== false && !hasHeader(headers, 'accept-encoding')) {
-      headers['Accept-Encoding'] = 'gzip, br';
-    }
     let requestBody: BodyInit | undefined;
     if (serializedBody !== undefined) {
       const preparedBody = await prepareRequestBody(serializedBody, headers, this.compression);
       headers = preparedBody.headers;
       requestBody = preparedBody.body;
+    }
+
+    // Consume HTTP/2 pushed resource if available, avoiding a network request
+    if (this.http2PushManager?.isEnabled()) {
+      const pushed = this.http2PushManager.consumePushedResource(url);
+      if (pushed !== undefined) {
+        return pushed as { data: T; headers: Record<string, string> };
+      }
+    }
+
+    if (this.compression?.enabled !== false && !hasHeader(headers, 'accept-encoding')) {
+      headers['Accept-Encoding'] = 'gzip, br';
     }
 
     // Apply proxy configuration if set
@@ -1064,7 +1105,7 @@ export class HttpClient {
 
           let action;
           try {
-            const action = await this.errorHandler(lastError, context);
+            action = await this.errorHandler(lastError, context);
 
             if (action.action === 'retry') {
               const delay = action.delayMs ?? this.computeRetryDelay(attempt);
@@ -1089,7 +1130,10 @@ export class HttpClient {
               continue;
             }
           } else if (action?.action === 'fallback') {
-            return action.fallbackValue as T;
+            return {
+              data: action.fallbackValue as T,
+              headers: {},
+            };
           } else if (action?.action === 'throw' && lastError.statusCode === 429) {
             throw interceptedError;
           }
@@ -1288,11 +1332,10 @@ export class HttpClient {
     };
     options.signal?.addEventListener('abort', onExternalAbort, { once: true });
 
-    const headers = buildHeaders({
-      defaultHeaders: this.defaultHeaders,
-      headers: options.headers,
-      requestId,
-    });
+    const headers = withRequestIdHeader(
+      withCorrelationIdHeader({ ...this.defaultHeaders, ...options.headers }, undefined),
+      requestId
+    );
 
     const timeoutMs = options.timeout ?? this.timeout;
     const signal = controller.signal;
@@ -1463,10 +1506,7 @@ export class HttpClient {
     try {
       // Build full URL
       const url = `${this.baseUrl}${path}`;
-      const headers = buildHeaders({
-        defaultHeaders: this.defaultHeaders,
-        headers: options.headers,
-      });
+      const headers = { ...this.defaultHeaders, ...options.headers };
 
       // Make the actual fetch request
       const response = await fetch(url, {
