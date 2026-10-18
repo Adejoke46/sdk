@@ -63,7 +63,13 @@ describe('TimeoutManager config', () => {
   it('getConfig returns the current configuration', () => {
     const mgr = new TimeoutManager({ default: 5000, min: 500, max: 60000 });
     const cfg = mgr.getConfig();
-    expect(cfg).toEqual({ default: 5000, min: 500, max: 60000 });
+    expect(cfg).toEqual({
+      default: 5000,
+      min: 500,
+      max: 60000,
+      request: 5000,
+      operation: 5000,
+    });
   });
 
   it('getConfig result is a copy – mutating it does not affect the manager', () => {

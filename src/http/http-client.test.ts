@@ -4,6 +4,7 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { HttpClient } from './http-client';
+import { buildHeaders } from './header-builder';
 import { ApiError, DorisioError } from '../types';
 import type { ErrorHandlerContext } from '../types/errors';
 
@@ -643,5 +644,158 @@ describe('HttpClient custom error handlers', () => {
 
     await expect(client.request('/api/v1/data', { method: 'GET' })).rejects.toBeInstanceOf(ApiError);
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('buildHeaders', () => {
+  it('merges default headers, auth token, custom headers, idempotency key and tracing headers', () => {
+    const headers = buildHeaders({
+      defaultHeaders: { 'Content-Type': 'application/json', Authorization: 'Bearer tok' },
+      headers: { 'X-Custom': 'v' },
+      idempotencyKey: 'idem',
+      requestId: 'req-1',
+      correlationId: 'corr-1',
+    });
+    expect(headers['Content-Type']).toBe('application/json');
+    expect(headers['Authorization']).toBe('Bearer tok');
+    expect(headers['User-Agent']).toBe('DorisioSDK/0.1.0');
+    expect(headers['Accept']).toBe('application/json');
+    expect(headers['X-Custom']).toBe('v');
+    expect(headers['Idempotency-Key']).toBe('idem');
+    expect(headers['X-Request-Id']).toBe('req-1');
+    expect(headers['X-Correlation-ID']).toBe('corr-1');
+  });
+
+  it('lets custom headers override defaults and the auth token', () => {
+    const headers = buildHeaders({
+      defaultHeaders: { Authorization: 'Bearer default', 'Content-Type': 'application/json' },
+      headers: { Authorization: 'Bearer custom', 'X-Custom': 'v' },
+      authToken: 't',
+    });
+    expect(headers['Authorization']).toBe('Bearer custom');
+    expect(headers['X-Custom']).toBe('v');
+  });
+
+  it('adds the auth token only when no Authorization header is already present', () => {
+    const withToken = buildHeaders({ defaultHeaders: {}, authToken: 'token-123' });
+    expect(withToken['Authorization']).toBe('Bearer token-123');
+
+    const without = buildHeaders({ defaultHeaders: {} });
+    expect(without['Authorization']).toBeUndefined();
+  });
+
+  it('does not override caller-supplied tracing headers', () => {
+    const headers = buildHeaders({
+      defaultHeaders: {},
+      headers: { 'X-Request-Id': 'caller-id', 'X-Correlation-ID': 'caller-corr' },
+      requestId: 'generated-id',
+      correlationId: 'generated-corr',
+    });
+    expect(headers['X-Request-Id']).toBe('caller-id');
+    expect(headers['X-Correlation-ID']).toBe('caller-corr');
+  });
+
+  it('fills User-Agent and Accept only when absent', () => {
+    const headers = buildHeaders({ defaultHeaders: {}, headers: { 'User-Agent': 'custom/1.0' } });
+    expect(headers['User-Agent']).toBe('custom/1.0');
+    expect(headers['Accept']).toBe('application/json');
+  });
+});
+
+describe('HttpClient header building', () => {
+  const originalFetch = globalThis.fetch;
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    vi.restoreAllMocks();
+  });
+
+  function mockFetch(): ReturnType<typeof vi.fn> {
+    const mock = vi.fn<typeof fetch>(async () =>
+      new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
+    globalThis.fetch = mock as unknown as typeof fetch;
+    return mock;
+  }
+
+  function lastHeaders(mock: ReturnType<typeof vi.fn>): Record<string, string> {
+    return mock.mock.calls[mock.mock.calls.length - 1]?.[1]?.headers as Record<string, string>;
+  }
+
+  it('sends default User-Agent, Accept, Content-Type and generated tracing headers', async () => {
+    const fetchMock = mockFetch();
+    const client = new HttpClient('https://api.example.com', { retryAttempts: 1 });
+
+    await client.request('/api/v1/health', { method: 'GET' });
+
+    const headers = lastHeaders(fetchMock);
+    expect(headers['User-Agent']).toBe('DorisioSDK/0.1.0');
+    expect(headers['Accept']).toBe('application/json');
+    expect(headers['Content-Type']).toBe('application/json');
+    expect(headers['X-Request-Id']).toBeDefined();
+    expect(headers['X-Correlation-ID']).toMatch(/^correlation-/);
+  });
+
+  it('adds the Authorization header when a token is set', async () => {
+    const fetchMock = mockFetch();
+    const client = new HttpClient('https://api.example.com', { retryAttempts: 1 });
+    client.setHeader('Authorization', 'Bearer token-123');
+
+    await client.request('/api/v1/users/me', { method: 'GET' });
+
+    expect(lastHeaders(fetchMock)['Authorization']).toBe('Bearer token-123');
+  });
+
+  it('adds the Idempotency-Key header when provided', async () => {
+    const fetchMock = mockFetch();
+    const client = new HttpClient('https://api.example.com', { retryAttempts: 1 });
+
+    await client.request('/api/v1/transactions/tip', {
+      method: 'POST',
+      body: { amount: 10 },
+      headers: { 'Idempotency-Key': 'idem-123' },
+    });
+
+    expect(lastHeaders(fetchMock)['Idempotency-Key']).toBe('idem-123');
+  });
+
+  it('lets custom per-request headers override defaults', async () => {
+    const fetchMock = mockFetch();
+    const client = new HttpClient('https://api.example.com', { retryAttempts: 1 });
+    client.setHeader('Authorization', 'Bearer default');
+
+    await client.request('/api/v1/health', {
+      method: 'GET',
+      headers: { 'X-Custom': 'override', Accept: 'text/plain' },
+    });
+
+    const headers = lastHeaders(fetchMock);
+    expect(headers['X-Custom']).toBe('override');
+    expect(headers['Accept']).toBe('text/plain');
+    expect(headers['Authorization']).toBe('Bearer default');
+  });
+
+  it('allows a request interceptor to add and override headers', async () => {
+    const fetchMock = mockFetch();
+    const client = new HttpClient('https://api.example.com', { retryAttempts: 1 });
+
+    client.getInterceptors().addRequestInterceptor((options) => ({
+      ...options,
+      headers: {
+        ...options.headers,
+        'X-Interceptor': 'added',
+        'X-Request-Id': 'interceptor-id',
+      },
+    }));
+
+    await client.request('/api/v1/health', { method: 'GET' });
+
+    const headers = lastHeaders(fetchMock);
+    expect(headers['X-Interceptor']).toBe('added');
+    expect(headers['X-Request-Id']).toBe('interceptor-id');
+    expect(headers['X-Correlation-ID']).toBeDefined();
   });
 });

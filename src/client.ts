@@ -27,7 +27,7 @@ import {
 } from './lib/analytics';
 import { CacheManager } from './cache/cache-manager';
 import type { CacheOptions } from './types/cache';
-import type { RequestCompressionConfig } from './http/compress';
+import type { RequestCompressionConfig, CompressionAlgorithm } from './http/compress';
 import {
   Creator,
   CreatorProfile,
@@ -169,10 +169,23 @@ export interface ClientConfig {
   throttleMaxRequests?: number;
   /** Throttling window in ms */
   throttleWindowMs?: number;
+  /**
+   * Base delay in ms for exponential backoff retries (default 1000).
+   * Delay grows as `baseDelay * (2 ^ attempt)`, plus optional jitter.
+   */
+  retryBaseDelayMs?: number;
+  /** Maximum delay in ms cap for exponential backoff retries (default 30000). */
+  retryMaxDelayMs?: number;
   /** Proxy configuration for corporate environments */
   proxy?: ProxyConfig;
   /** Compress serialized request bodies above the configured threshold (default 1 KiB). */
   compress?: RequestCompressionConfig;
+  /** Enable request/response compression. Defaults to true. */
+  compressionEnabled?: boolean;
+  /** Minimum serialized request/response size in bytes for compression (default 1024). */
+  compressionThreshold?: number;
+  /** Compression format for request bodies ('gzip' | 'brotli', default 'gzip'). */
+  compressionAlgorithm?: CompressionAlgorithm;
   /** Telemetry configuration for usage analytics */
   telemetry?: TelemetryConfig;
   /** Offline-first storage and sync configuration */
@@ -284,8 +297,14 @@ export class DorisioClient {
       enableThrottling: config.enableThrottling,
       throttleMaxRequests: config.throttleMaxRequests,
       throttleWindowMs: config.throttleWindowMs,
+      retryBaseDelayMs: config.retryBaseDelayMs,
+      retryMaxDelayMs: config.retryMaxDelayMs,
       proxy: config.proxy,
-      compress: config.compress,
+      compress: config.compress ?? {
+        enabled: config.compressionEnabled,
+        threshold: config.compressionThreshold,
+        algorithm: config.compressionAlgorithm,
+      },
     };
 
     this.token = config.token;
@@ -319,6 +338,8 @@ export class DorisioClient {
       schemas: config.schemas,
       timeout: this.config.timeout,
       retryAttempts: getConfig().retryAttempts,
+      retryBaseDelayMs: config.retryBaseDelayMs,
+      retryMaxDelayMs: config.retryMaxDelayMs,
       mode,
       sandboxSeed: config.sandboxSeed,
       sandboxLatency: config.sandboxLatency,

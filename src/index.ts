@@ -5,6 +5,17 @@
  * Provides type-safe API client and utilities for integrating Dorisio payments.
  */
 
+// Re-export DNS failover utilities
+export {
+  DnsFailoverManager,
+  DnsFailoverError,
+  isDnsError,
+  isTransientNetworkError,
+  DEFAULT_DNS_CACHE_TTL_MS,
+  type DnsFailoverOptions,
+  type DnsResolveResult,
+} from './http/dns-failover';
+
 export const SDK_VERSION = '0.1.0';
 
 // Re-export client and utilities
@@ -27,19 +38,19 @@ export {
 export {
   GET_CREATOR,
   GET_CREATOR_WITH_USER,
-  LIST_CREATORS,
-  GET_CREATOR_PROFILE,
+ LIST_CREATORS,
+ GET_CREATOR_PROFILE,
   GET_TRANSACTION,
-  GET_TRANSACTION_WITH_DETAILS,
-  GET_TRANSACTION_HISTORY,
-  GET_WALLET,
-  GET_WALLETS,
-  CREATE_TIP,
-  buildCreatorQuery,
-  buildListCreatorsQuery,
-  buildTransactionQuery,
-  buildTransactionHistoryQuery,
-  buildCustomQuery,
+ GET_TRANSACTION_WITH_DETAILS,
+ GET_TRANSACTION_HISTORY,
+ GET_WALLET,
+ GET_WALLETS,
+ CREATE_TIP,
+ buildCreatorQuery,
+ buildListCreatorsQuery,
+ buildTransactionQuery,
+ buildTransactionHistoryQuery,
+ buildCustomQuery,
 } from './graphql/queries';
 
 // Re-export HTTP interceptors (public API for custom middleware)
@@ -69,6 +80,8 @@ export type {
 } from './types/validation';
 export { CacheManager } from './cache/cache-manager';
 export type { CacheOptions, CacheStats, CacheStrategy } from './types/cache';
+export { Http2PushManager } from './http/http2-push';
+export type { Http2PushConfig, PushedResourceEntry } from './http/http2-push';
 export { RequestQueue, type RequestQueueOptions } from './http/request-queue';
 export { PriorityRequestQueue, type PriorityRequestQueueOptions } from './queue/request-queue';
 export type { QueueConfig, QueueStats, RequestPriority } from './types/queue';
@@ -79,6 +92,14 @@ export {
   type ConnectionPoolOptions,
   type ConnectionPoolStats,
 } from './http/connection-pool';
+export {
+  SocketManager,
+  type SocketManagerOptions,
+  type SocketManagerStats,
+  type SocketEntry,
+  type SocketState,
+  type SocketLike,
+} from './http/socket-manager';
 export {
   OfflineQueue,
   type OfflineQueueOptions,
@@ -218,6 +239,7 @@ export type {
   Middleware,
   MiddlewareContext,
 } from './types/errors';
+export { isRetryableError } from './lib/errors/utils';
 
 // Re-export HTTP error factory (HTTP status -> error class mapping)
 export {
@@ -255,7 +277,14 @@ export type {
 } from './types';
 
 // Re-export utils
-export { RequestValidator } from './utils';
+export { ApiErrorHandler, RequestValidator } from './utils';
+export {
+  isAuthError,
+  isPaymentError,
+  isValidationError,
+  isRateLimitError,
+  isNetworkError,
+} from './lib/errors/type-guards';
 
 // Re-export idempotency manager
 export {
@@ -424,3 +453,14 @@ export {
   type PluginCompositionResult,
   type PluginStatEntry,
 } from './lib/plugin-system';
+
+// Re-export batch processor (Issue #140)
+export {
+  BatchProcessor,
+  createBatchProcessor,
+  type BatchProcessorOptions,
+  type BatchRequest,
+  type BatchResult,
+  type BatchItemResult,
+  type BatchSummary,
+} from './http/batch-processor';
