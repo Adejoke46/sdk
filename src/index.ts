@@ -38,19 +38,19 @@ export {
 export {
   GET_CREATOR,
   GET_CREATOR_WITH_USER,
- LIST_CREATORS,
- GET_CREATOR_PROFILE,
+  LIST_CREATORS,
+  GET_CREATOR_PROFILE,
   GET_TRANSACTION,
- GET_TRANSACTION_WITH_DETAILS,
- GET_TRANSACTION_HISTORY,
- GET_WALLET,
- GET_WALLETS,
- CREATE_TIP,
- buildCreatorQuery,
- buildListCreatorsQuery,
- buildTransactionQuery,
- buildTransactionHistoryQuery,
- buildCustomQuery,
+  GET_TRANSACTION_WITH_DETAILS,
+  GET_TRANSACTION_HISTORY,
+  GET_WALLET,
+  GET_WALLETS,
+  CREATE_TIP,
+  buildCreatorQuery,
+  buildListCreatorsQuery,
+  buildTransactionQuery,
+  buildTransactionHistoryQuery,
+  buildCustomQuery,
 } from './graphql/queries';
 
 // Re-export HTTP interceptors (public API for custom middleware)
@@ -293,6 +293,22 @@ export {
   type IdempotencyManagerOptions,
   type IdempotencyRecord,
 } from './utils/idempotency-manager';
+
+// Re-export idempotency manager
+export {
+  IdempotencyManager,
+  getIdempotencyManager,
+  type IdempotencyManagerOptions,
+  type IdempotencyRecord,
+} from './utils/idempotency-manager';
+
+// Re-export request fingerprinting (duplicate detection)
+export {
+  generateFingerprint,
+  RequestFingerprinter,
+  type FingerprinterOptions,
+  type FingerprintCacheEntry,
+} from './http/fingerprinter';
 
 // Re-export webhook utilities
 export {
