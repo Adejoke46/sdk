@@ -9,8 +9,11 @@
  *   the wallet filter or hits a stale creator after rapid switches.
  */
 
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useRef, useDebugValue } from 'react';
 import { useDorisio } from './DorisioProvider';
+import { ApiCreatorEarningsSchema } from '../types/schemas';
+import { logRejection, runSafely } from './safe-async';
+import { formatDebugValue } from './debug-format';
 
 export interface CreatorBalance {
   totalEarnings: number;
@@ -36,7 +39,15 @@ export interface UseCreatorBalanceActions {
  * useCreatorBalance
  *
  * Fetches creator earnings and wallet balance information.
- * Optionally auto-fetches on mount if creatorId is provided.
+ * Optionally auto-fetches on mount if creatorId is provided. Auto-fetch failures are
+ * exposed via `error` and logged to the console rather than raised as unhandled
+ * rejections; manual `fetchBalance()` / `refetch()` calls reject with the original error.
+ *
+ * @debugValue Displays `{ loading, error, balance, lastUpdated }` in React DevTools.
+ *   - `loading` (boolean): whether a request is in flight
+ *   - `error` (string | undefined): last error message, if any
+ *   - `balance` (object | undefined): { totalEarnings, pendingBalance } of the creator, if loaded
+ *   - `lastUpdated` (number | undefined): timestamp of the last successful fetch
  *
  * @example
  * ```tsx
@@ -69,78 +80,136 @@ export function useCreatorBalance(
     loading: false,
   });
 
+  const isMountedRef = useRef(true);
+  const abortControllersRef = useRef<Set<AbortController>>(new Set());
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    const controllers = abortControllersRef.current;
+    return () => {
+      isMountedRef.current = false;
+      for (const controller of controllers) {
+        controller.abort();
+      }
+      controllers.clear();
+    };
+  }, []);
+
+  // Tracks the most recent request so a superseding fetch (e.g. the creator id
+  // changed) cancels the previous in-flight request instead of leaving it to
+  // resolve into a state update that is merely ignored.
+  const activeControllerRef = useRef<AbortController | null>(null);
+
+  const withAbort = <T>(fn: (signal: AbortSignal) => Promise<T>): Promise<T> => {
+    activeControllerRef.current?.abort();
+    const controller = new AbortController();
+    activeControllerRef.current = controller;
+    abortControllersRef.current.add(controller);
+    return fn(controller.signal).finally(() => {
+      abortControllersRef.current.delete(controller);
+      if (activeControllerRef.current === controller) {
+        activeControllerRef.current = null;
+      }
+    });
+  };
+
+  const safeSetState = useCallback(
+    (fn: React.SetStateAction<UseCreatorBalanceState>) => {
+      if (!isMountedRef.current) return;
+      setState(fn);
+    },
+    []
+  );
+
   const [creatorId, setCreatorId] = useState(initialCreatorId);
 
   const creatorIdRef = useRef(creatorId);
   creatorIdRef.current = creatorId;
   const walletIdRef = useRef<string | undefined>(undefined);
+  const requestIdRef = useRef(0);
 
   const fetchBalance = useCallback(
-    async (id: string, walletId?: string): Promise<CreatorBalance> => {
-      try {
-        setState((s) => ({ ...s, loading: true, error: undefined }));
-        setIsLoading(true);
-        setCreatorId(id);
-        creatorIdRef.current = id;
+    (id: string, walletId?: string): Promise<CreatorBalance> => {
+      const requestId = ++requestIdRef.current;
+      const isCurrentRequest = () => requestId === requestIdRef.current;
 
-        // Persist walletId when provided so refetch keeps the same filter.
-        const resolvedWalletId = walletId !== undefined ? walletId : walletIdRef.current;
-        if (walletId !== undefined) {
-          walletIdRef.current = walletId;
-        }
-
-        // Fetch earnings data
-        const earningsResponse = await client.request('GET', `/api/v1/creators/${id}/earnings`);
-
-        if (!earningsResponse.success || !earningsResponse.data) {
-          throw new Error(earningsResponse.error?.message || 'Failed to fetch creator earnings');
-        }
-
-        let balance: CreatorBalance = {
-          totalEarnings: (earningsResponse.data as any).totalEarnings || 0,
-          pendingBalance: (earningsResponse.data as any).pendingBalance || 0,
-        };
-
-        // Optionally fetch wallet balance
-        if (resolvedWalletId) {
-          try {
-            const balanceResponse = await client.request<any>(
-              'GET',
-              `/api/v1/wallet/${resolvedWalletId}/balance`
-            );
-
-            if (balanceResponse.success && balanceResponse.data) {
-              const d = balanceResponse.data;
-              balance = {
-                ...balance,
-                lumens: d.lumens,
-                usdc: d.usdc,
-              };
+      return runSafely(
+        { setError, setIsLoading },
+        {
+          code: 'FETCH_BALANCE_ERROR',
+          fallbackMessage: 'Failed to fetch balance',
+          onStart: () => {
+            safeSetState((s) => ({ ...s, loading: true, error: undefined }));
+            if (isMountedRef.current) {
+              setCreatorId(id);
             }
-          } catch (err) {
-            // Silently fail wallet balance fetch
-            console.warn('Failed to fetch wallet balance:', err);
-          }
-        }
+            creatorIdRef.current = id;
+          },
+          onError: (error) => {
+            if (isCurrentRequest()) {
+              safeSetState((s) => ({ ...s, error, loading: false }));
+            }
+          },
+          isMounted: () => isMountedRef.current && isCurrentRequest(),
+        },
+        () =>
+          withAbort(async (signal) => {
+            // Persist walletId when provided so refetch keeps the same filter.
+            const resolvedWalletId = walletId !== undefined ? walletId : walletIdRef.current;
+            if (walletId !== undefined) {
+              walletIdRef.current = walletId;
+            }
 
-        setState((s) => ({
-          ...s,
-          balance,
-          lastUpdated: Date.now(),
-          loading: false,
-        }));
+            // Fetch earnings data
+            const earningsResponse = await client.request<{
+              totalEarnings: number;
+              pendingBalance: number;
+              lumens?: string;
+              usdc?: string;
+            }>('GET', `/api/v1/creators/${id}/earnings`, undefined, { signal });
 
-        return balance;
-      } catch (err) {
-        const error = err instanceof Error ? err.message : 'Failed to fetch balance';
-        setState((s) => ({ ...s, error, loading: false }));
-        setError({ message: error, code: 'FETCH_BALANCE_ERROR' });
-        throw err;
-      } finally {
-        setIsLoading(false);
-      }
+            if (!earningsResponse.success || !earningsResponse.data) {
+              throw new Error(
+                earningsResponse.error?.message || 'Failed to fetch creator earnings'
+              );
+            }
+
+            const earningsSchema = ApiCreatorEarningsSchema.parse(earningsResponse.data);
+
+            let balance: CreatorBalance = {
+              totalEarnings: earningsSchema.totalEarnings,
+              pendingBalance: earningsSchema.pendingBalance,
+            };
+
+            // Optionally fetch wallet balance
+            if (resolvedWalletId) {
+              try {
+                const balanceResponse = await client.request<{ lumens?: string; usdc?: string }>(
+                  'GET',
+                  `/api/v1/wallet/${resolvedWalletId}/balance`,
+                  undefined,
+                  { signal }
+                );
+
+                if (balanceResponse.success && balanceResponse.data) {
+                  const d = balanceResponse.data;
+                  balance = { ...balance, lumens: d.lumens, usdc: d.usdc };
+                }
+              } catch (err) {
+                // Wallet balance is optional; earnings still succeed.
+                console.warn('Failed to fetch wallet balance:', err);
+              }
+            }
+
+            if (isCurrentRequest()) {
+              safeSetState((s) => ({ ...s, balance, lastUpdated: Date.now(), loading: false }));
+            }
+
+            return balance;
+          })
+      );
     },
-    [client, setError, setIsLoading]
+    [client, setError, setIsLoading, safeSetState]
   );
 
   const refetch = useCallback(async () => {
@@ -151,21 +220,35 @@ export function useCreatorBalance(
   }, [fetchBalance]);
 
   const reset = useCallback(() => {
-    setState({
+    requestIdRef.current += 1;
+    safeSetState({
       loading: false,
     });
-    setCreatorId(undefined);
+    if (isMountedRef.current) {
+      setCreatorId(undefined);
+    }
     creatorIdRef.current = undefined;
     walletIdRef.current = undefined;
-  }, []);
+  }, [safeSetState]);
 
-  // Auto-fetch on mount
+  // Auto-fetch when the requested creator or fetch configuration changes.
   useEffect(() => {
     if (autoFetch && initialCreatorId) {
-      void fetchBalance(initialCreatorId);
+      // Error is already reflected in hook state; just make sure it can't go unhandled.
+      logRejection(fetchBalance(initialCreatorId), 'useCreatorBalance auto-fetch');
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only autoFetch
-  }, []);
+  }, [autoFetch, initialCreatorId, fetchBalance]);
+
+  useDebugValue(
+    formatDebugValue({
+      loading: state.loading,
+      error: state.error,
+      balance: state.balance
+        ? { totalEarnings: state.balance.totalEarnings, pendingBalance: state.balance.pendingBalance }
+        : undefined,
+      lastUpdated: state.lastUpdated,
+    })
+  );
 
   return {
     ...state,

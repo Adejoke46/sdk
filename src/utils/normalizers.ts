@@ -2,6 +2,8 @@
  * Response Normalizers
  *
  * Ensures consistent data structure across SDK responses.
+ * All raw API data is validated through Zod schemas before mapping
+ * to SDK domain models, so shape mismatches surface at the boundary.
  */
 
 import {
@@ -12,17 +14,44 @@ import {
   User,
   Wallet,
 } from '../types/models';
+import {
+  ApiCreatorSchema,
+  ApiListCreatorsSchema,
+  ApiTransactionHistorySchema,
+  ApiTransactionSchema,
+  ApiUserSchema,
+  ApiWalletSchema,
+  PaymentSchemas,
+  type CreateTipInput,
+} from '../types/schemas';
 
 /**
- * Normalize creator profile
- * Ensures all optional fields have defaults
+ * Normalize creator profile.
+ * Ensures all optional fields have defaults and validates raw input if necessary.
+ *
+ * @param creator - Creator entity or raw creator data
+ * @returns Normalized CreatorProfile
+ *
+ * @example
+ * ```ts
+ * import { normalizeCreatorProfile } from '@dorisio/sdk';
+ *
+ * const profile = normalizeCreatorProfile(creatorData);
+ * ```
  */
-export function normalizeCreatorProfile(creator: Creator): CreatorProfile {
+export function normalizeCreatorProfile(creator: Creator | unknown): CreatorProfile {
+  const isCreatorObj =
+    creator !== null &&
+    typeof creator === 'object' &&
+    'id' in creator &&
+    typeof (creator as Record<string, unknown>)['id'] === 'string';
+  const normalized = isCreatorObj ? normalizeCreator(creator) : normalizeCreator(creator);
+
   return {
-    ...creator,
-    displayName: creator.displayName ?? '',
-    bio: creator.bio ?? '',
-    avatar: creator.avatar ?? null,
+    ...normalized,
+    displayName: normalized.displayName ?? '',
+    bio: normalized.bio ?? '',
+    avatar: normalized.avatar ?? null,
     stats: {
       totalTips: 0,
       averageTip: 0,
@@ -32,34 +61,70 @@ export function normalizeCreatorProfile(creator: Creator): CreatorProfile {
 }
 
 /**
- * Normalize creator from raw API response
- * Handles missing or malformed fields
+ * Normalize and validate create-tip input against PaymentSchemas.createTip.
+ *
+ * @param data - Raw create tip input data
+ * @returns Validated CreateTipInput
+ *
+ * @example
+ * ```ts
+ * import { normalizeCreateTip } from '@dorisio/sdk';
+ *
+ * const validatedInput = normalizeCreateTip({
+ *   amount: 25,
+ *   currency: 'USD',
+ *   creatorId: '550e8400-e29b-41d4-a716-446655440000',
+ *   message: 'Awesome work!',
+ * });
+ * ```
  */
-export function normalizeCreator(data: any): Creator {
-  if (!data || typeof data !== 'object') {
-    throw new Error('Invalid creator data');
-  }
+export function normalizeCreateTip(data: unknown): CreateTipInput {
+  return PaymentSchemas.createTip.parse(data);
+}
 
+/**
+ * Alias for normalizeCreateTip for explicit input naming.
+ *
+ * @param data - Raw create tip input data
+ * @returns Validated CreateTipInput
+ *
+ * @example
+ * ```ts
+ * import { normalizeCreateTipInput } from '@dorisio/sdk';
+ *
+ * const validated = normalizeCreateTipInput(rawInput);
+ * ```
+ */
+export function normalizeCreateTipInput(data: unknown): CreateTipInput {
+  return PaymentSchemas.createTip.parse(data);
+}
+
+/**
+ * Normalize creator from raw API response.
+ * Validates against ApiCreatorSchema before mapping.
+ */
+export function normalizeCreator(data: unknown): Creator {
+  const parsed = ApiCreatorSchema.parse(data);
   return {
-    id: String(data.id),
-    userId: String(data.userId),
-    username: String(data.username || ''),
-    displayName: data.displayName ? String(data.displayName) : null,
-    bio: data.bio ? String(data.bio) : null,
-    avatar: data.avatar ? String(data.avatar) : null,
-    verified: Boolean(data.verified),
-    isPublic: data.isPublic !== false,
-    totalEarnings: Number(data.totalEarnings || 0),
-    pendingBalance: Number(data.pendingBalance || 0),
-    createdAt: String(data.createdAt || new Date().toISOString()),
-    updatedAt: data.updatedAt ? String(data.updatedAt) : new Date().toISOString(),
+    id: parsed.id,
+    userId: parsed.userId,
+    username: parsed.username,
+    displayName: parsed.displayName ?? null,
+    bio: parsed.bio ?? null,
+    avatar: parsed.avatar ?? null,
+    verified: parsed.verified,
+    isPublic: parsed.isPublic,
+    totalEarnings: parsed.totalEarnings,
+    pendingBalance: parsed.pendingBalance,
+    createdAt: parsed.createdAt,
+    updatedAt: parsed.updatedAt,
   };
 }
 
 /**
- * Normalize array of creators
+ * Normalize array of creators.
  */
-export function normalizeCreators(data: any[]): Creator[] {
+export function normalizeCreators(data: unknown): Creator[] {
   if (!Array.isArray(data)) {
     return [];
   }
@@ -67,48 +132,44 @@ export function normalizeCreators(data: any[]): Creator[] {
 }
 
 /**
- * Normalize user from raw API response
+ * Normalize user from raw API response.
+ * Validates against ApiUserSchema before mapping.
  */
-export function normalizeUser(data: any): User {
-  if (!data || typeof data !== 'object') {
-    throw new Error('Invalid user data');
-  }
-
+export function normalizeUser(data: unknown): User {
+  const parsed = ApiUserSchema.parse(data);
   return {
-    id: String(data.id),
-    email: String(data.email || ''),
-    name: data.name ? String(data.name) : null,
-    role: (data.role || 'fan') as 'fan' | 'creator' | 'admin',
-    verified: Boolean(data.verified),
-    avatar: data.avatar ? String(data.avatar) : null,
-    createdAt: String(data.createdAt || new Date().toISOString()),
-    updatedAt: data.updatedAt ? String(data.updatedAt) : new Date().toISOString(),
+    id: parsed.id,
+    email: parsed.email,
+    name: parsed.name ?? null,
+    role: parsed.role,
+    verified: parsed.verified,
+    avatar: parsed.avatar ?? null,
+    createdAt: parsed.createdAt,
+    updatedAt: parsed.updatedAt,
   };
 }
 
 /**
- * Normalize wallet from raw API response
+ * Normalize wallet from raw API response.
+ * Validates against ApiWalletSchema before mapping.
  */
-export function normalizeWallet(data: any): Wallet {
-  if (!data || typeof data !== 'object') {
-    throw new Error('Invalid wallet data');
-  }
-
+export function normalizeWallet(data: unknown): Wallet {
+  const parsed = ApiWalletSchema.parse(data);
   return {
-    id: String(data.id),
-    userId: String(data.userId),
-    publicKey: String(data.publicKey || ''),
-    name: data.name ? String(data.name) : null,
-    verified: Boolean(data.verified),
-    createdAt: String(data.createdAt || new Date().toISOString()),
-    updatedAt: data.updatedAt ? String(data.updatedAt) : new Date().toISOString(),
+    id: parsed.id,
+    userId: parsed.userId,
+    publicKey: parsed.publicKey,
+    name: parsed.name ?? null,
+    verified: parsed.verified,
+    createdAt: parsed.createdAt,
+    updatedAt: parsed.updatedAt,
   };
 }
 
 /**
- * Normalize array of wallets
+ * Normalize array of wallets.
  */
-export function normalizeWallets(data: any[]): Wallet[] {
+export function normalizeWallets(data: unknown): Wallet[] {
   if (!Array.isArray(data)) {
     return [];
   }
@@ -116,35 +177,36 @@ export function normalizeWallets(data: any[]): Wallet[] {
 }
 
 /**
- * Normalize transaction from raw API response
+ * Normalize transaction from raw API response.
+ * Validates against ApiTransactionSchema before mapping.
  */
-export function normalizeTransaction(data: any): Transaction {
-  if (!data || typeof data !== 'object') {
-    throw new Error('Invalid transaction data');
-  }
+export function normalizeTransaction(data: unknown): Transaction {
+  const parsed = ApiTransactionSchema.parse(data);
 
-  const status = (data.stellarStatus || data.status || 'pending') as
+  // Map 'completed' (used by updateTipStatus endpoint) to 'confirmed' for the domain model
+  const rawStatus = parsed.stellarStatus ?? parsed.status ?? 'pending';
+  const status = (rawStatus === 'completed' ? 'confirmed' : rawStatus) as
     | 'pending'
     | 'confirmed'
     | 'failed';
 
   return {
-    id: String(data.id),
-    fromUserId: String(data.fromUserId),
-    creatorId: String(data.creatorId),
-    amount: Number(data.amount || 0),
-    message: data.message ? String(data.message) : null,
+    id: parsed.id,
+    fromUserId: parsed.fromUserId,
+    creatorId: parsed.creatorId,
+    amount: parsed.amount,
+    message: parsed.message ?? null,
     status,
-    stellarTxHash: data.stellarTxHash ? String(data.stellarTxHash) : null,
-    createdAt: String(data.createdAt || new Date().toISOString()),
-    updatedAt: data.updatedAt ? String(data.updatedAt) : new Date().toISOString(),
+    stellarTxHash: parsed.stellarTxHash ?? null,
+    createdAt: parsed.createdAt,
+    updatedAt: parsed.updatedAt,
   };
 }
 
 /**
- * Normalize array of transactions
+ * Normalize array of transactions.
  */
-export function normalizeTransactions(data: any[]): Transaction[] {
+export function normalizeTransactions(data: unknown): Transaction[] {
   if (!Array.isArray(data)) {
     return [];
   }
@@ -152,17 +214,34 @@ export function normalizeTransactions(data: any[]): Transaction[] {
 }
 
 /**
- * Normalize transaction history response
+ * Normalize transaction history response.
+ * Validates the entire envelope (including nested transactions) via Zod.
  */
-export function normalizeTransactionHistory(data: any): TransactionHistory {
-  if (!data || typeof data !== 'object') {
-    throw new Error('Invalid transaction history');
-  }
-
+export function normalizeTransactionHistory(data: unknown): TransactionHistory {
+  const parsed = ApiTransactionHistorySchema.parse(data);
   return {
-    transactions: normalizeTransactions(data.transactions || []),
-    total: Number(data.total || 0),
-    page: Number(data.page || 1),
-    pageSize: Number(data.pageSize || 20),
+    transactions: parsed.transactions.map(normalizeTransaction),
+    total: parsed.total,
+    page: parsed.page,
+    pageSize: parsed.pageSize,
+  };
+}
+
+/**
+ * Normalize paginated list-creators response.
+ * Validates through ApiListCreatorsSchema before mapping.
+ */
+export function normalizeListCreatorsResponse(data: unknown): {
+  creators: Creator[];
+  total: number;
+  page: number;
+  pageSize: number;
+} {
+  const parsed = ApiListCreatorsSchema.parse(data);
+  return {
+    creators: parsed.creators.map(normalizeCreator),
+    total: parsed.total,
+    page: parsed.page,
+    pageSize: parsed.pageSize,
   };
 }

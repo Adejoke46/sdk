@@ -146,7 +146,9 @@ describe('Creator Methods', () => {
 
       expect(result).toBeDefined();
       expect(result.stats).toBeDefined();
-      expect(result.stats.totalTips).toBe(150);
+      // stats is always set by getCreatorProfile — assert defined for type narrowing
+      const stats = result.stats as NonNullable<typeof result.stats>;
+      expect(stats.totalTips).toBe(150);
       expect(mockRequest).toHaveBeenCalledWith('GET', '/creators/profile/alice-creator');
     });
 
@@ -166,9 +168,10 @@ describe('Creator Methods', () => {
       const result = await client.getCreatorProfile('bob-creator');
 
       expect(result.stats).toBeDefined();
-      expect(result.stats.totalTips).toBe(0);
-      expect(result.stats.averageTip).toBe(0);
-      expect(result.stats.lastTipDate).toBeNull();
+      const stats = result.stats as NonNullable<typeof result.stats>;
+      expect(stats.totalTips).toBe(0);
+      expect(stats.averageTip).toBe(0);
+      expect(stats.lastTipDate).toBeNull();
     });
 
     it('should throw error if profile not found', async () => {

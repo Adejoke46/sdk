@@ -40,12 +40,16 @@ export class ResponseNormalizer {
   /**
    * Extract data from response
    */
-  static extractData<T>(response: ApiResponse<T>): T {
+  static extractData<T>(response: ApiResponse<T> | null | undefined): T {
+    if (!response || typeof response !== 'object') {
+      throw new Error('Invalid response format');
+    }
+
     if (!response.success) {
       throw new Error(response.error?.message || 'Response failed');
     }
 
-    if (response.data === undefined) {
+    if (response.data == null) {
       throw new Error('No data in response');
     }
 

@@ -1,205 +1,486 @@
+// @vitest-environment jsdom
 /**
  * useCreatorBalance Hook Tests
- * Tests for creator earnings and balance hook
+ * Tests for creator earnings and balance hook covering idle, loading, success,
+ * error paths, context propagation (setError), race conditions, and unmount cleanup.
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import React from 'react';
+import { describe, it, expect, vi, beforeEach, afterEach, type MockInstance } from 'vitest';
+import { renderHook, act, waitFor, cleanup } from '@testing-library/react';
+import { DorisioProvider } from './DorisioProvider';
+import { useCreatorBalance } from './useCreatorBalance';
 
 describe('useCreatorBalance Hook', () => {
+  let mockRequest: ReturnType<typeof vi.fn>;
   let mockClient: any;
+  let consoleError: MockInstance<any[], any>;
+  let consoleWarn: MockInstance<any[], any>;
+
+  function wrapperFor(props: Record<string, unknown> = {}) {
+    return function Wrapper({ children }: { children: React.ReactNode }) {
+      return React.createElement(
+        DorisioProvider,
+        { client: mockClient, config: {} as any, children, ...props }
+      );
+    };
+  }
 
   beforeEach(() => {
+    mockRequest = vi.fn();
     mockClient = {
-      request: vi.fn(),
+      request: mockRequest,
+      setToken: vi.fn(),
+      clearToken: vi.fn(),
     };
+    consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
   });
 
-  describe('fetchBalance', () => {
-    it('should fetch creator balance', async () => {
-      const mockResponse = {
-        success: true,
-        data: {
-          totalEarnings: 5000,
-          availableBalance: 4500,
-          pendingBalance: 500,
-          lumens: '100',
-          usdc: '5000',
-        },
-      };
+  afterEach(() => {
+    cleanup();
+    consoleError.mockRestore();
+    consoleWarn.mockRestore();
+    vi.clearAllMocks();
+  });
 
-      mockClient.request.mockResolvedValue(mockResponse);
-
-      const response = await mockClient.request('GET', '/api/v1/wallet/creator-123/balance');
-
-      expect(response.data.totalEarnings).toBe(5000);
-      expect(response.data.availableBalance).toBe(4500);
-      expect(response.data.pendingBalance).toBe(500);
-    });
-
-    it('should fetch balance with specific wallet', async () => {
-      mockClient.request.mockResolvedValue({
-        success: true,
-        data: {
-          totalEarnings: 5000,
-          availableBalance: 4500,
-          pendingBalance: 500,
-        },
+  describe('initial state', () => {
+    it('initializes with loading false and undefined balance without autoFetch', () => {
+      const { result } = renderHook(() => useCreatorBalance(undefined, false), {
+        wrapper: wrapperFor(),
       });
 
-      const response = await mockClient.request(
-        'GET',
-        '/api/v1/wallet/creator-123/balance?walletId=wallet-456'
-      );
+      expect(result.current.loading).toBe(false);
+      expect(result.current.balance).toBeUndefined();
+      expect(result.current.error).toBeUndefined();
+      expect(result.current.lastUpdated).toBeUndefined();
+    });
+  });
 
-      expect(response.data.totalEarnings).toBe(5000);
-      expect(mockClient.request).toHaveBeenCalledWith(
+  describe('fetchBalance happy paths', () => {
+    it('fetches creator earnings and updates balance state', async () => {
+      const earningsData = {
+        totalEarnings: 5000,
+        pendingBalance: 500,
+        confirmedBalance: 4500,
+        transactionCount: 25,
+      };
+
+      mockRequest.mockResolvedValueOnce({
+        success: true,
+        data: earningsData,
+      });
+
+      const { result } = renderHook(() => useCreatorBalance(undefined, false), {
+        wrapper: wrapperFor(),
+      });
+
+      let balanceResult: any;
+      await act(async () => {
+        balanceResult = await result.current.fetchBalance('creator-123');
+      });
+
+      expect(balanceResult).toEqual({
+        totalEarnings: 5000,
+        pendingBalance: 500,
+      });
+      expect(result.current.balance).toEqual({
+        totalEarnings: 5000,
+        pendingBalance: 500,
+      });
+      expect(result.current.loading).toBe(false);
+      expect(result.current.lastUpdated).toBeDefined();
+      expect(mockRequest).toHaveBeenCalledWith(
         'GET',
-        '/api/v1/wallet/creator-123/balance?walletId=wallet-456'
+        '/api/v1/creators/creator-123/earnings',
+        undefined,
+        expect.any(Object)
       );
     });
 
-    it('should handle balance fetch error', async () => {
-      mockClient.request.mockResolvedValue({
+    it('fetches balance with specific wallet and includes wallet assets', async () => {
+      mockRequest
+        .mockResolvedValueOnce({
+          success: true,
+          data: { totalEarnings: 5000, pendingBalance: 500 },
+        })
+        .mockResolvedValueOnce({
+          success: true,
+          data: { lumens: '150.5', usdc: '500.0' },
+        });
+
+      const { result } = renderHook(() => useCreatorBalance(undefined, false), {
+        wrapper: wrapperFor(),
+      });
+
+      await act(async () => {
+        await result.current.fetchBalance('creator-123', 'wallet-456');
+      });
+
+      expect(result.current.balance).toEqual({
+        totalEarnings: 5000,
+        pendingBalance: 500,
+        lumens: '150.5',
+        usdc: '500.0',
+      });
+      expect(mockRequest).toHaveBeenCalledWith(
+        'GET',
+        '/api/v1/creators/creator-123/earnings',
+        undefined,
+        expect.any(Object)
+      );
+      expect(mockRequest).toHaveBeenCalledWith(
+        'GET',
+        '/api/v1/wallet/wallet-456/balance',
+        undefined,
+        expect.any(Object)
+      );
+    });
+
+    it('recovers gracefully when optional wallet balance fetch fails', async () => {
+      mockRequest
+        .mockResolvedValueOnce({
+          success: true,
+          data: { totalEarnings: 2000, pendingBalance: 100 },
+        })
+        .mockRejectedValueOnce(new Error('Wallet service unavailable'));
+
+      const { result } = renderHook(() => useCreatorBalance(undefined, false), {
+        wrapper: wrapperFor(),
+      });
+
+      await act(async () => {
+        await result.current.fetchBalance('creator-123', 'wallet-456');
+      });
+
+      expect(result.current.balance).toEqual({
+        totalEarnings: 2000,
+        pendingBalance: 100,
+      });
+      expect(result.current.error).toBeUndefined();
+      expect(consoleWarn).toHaveBeenCalledWith(
+        'Failed to fetch wallet balance:',
+        expect.any(Error)
+      );
+    });
+
+    it('handles zero balances correctly', async () => {
+      mockRequest.mockResolvedValueOnce({
+        success: true,
+        data: { totalEarnings: 0, pendingBalance: 0 },
+      });
+
+      const { result } = renderHook(() => useCreatorBalance(undefined, false), {
+        wrapper: wrapperFor(),
+      });
+
+      await act(async () => {
+        await result.current.fetchBalance('creator-new');
+      });
+
+      expect(result.current.balance?.totalEarnings).toBe(0);
+      expect(result.current.balance?.pendingBalance).toBe(0);
+    });
+  });
+
+  describe('error paths and context propagation', () => {
+    it('propagates error to DorisioProvider context and rejects on manual fetch failure', async () => {
+      const originalError = new Error('Creator not found');
+      mockRequest.mockRejectedValueOnce(originalError);
+
+      const onError = vi.fn();
+      const { result } = renderHook(() => useCreatorBalance(undefined, false), {
+        wrapper: wrapperFor({ onError }),
+      });
+
+      let caughtError: any;
+      await act(async () => {
+        try {
+          await result.current.fetchBalance('creator-invalid');
+        } catch (err) {
+          caughtError = err;
+        }
+      });
+
+      expect(caughtError).toBe(originalError);
+      expect(result.current.error).toBe('Creator not found');
+      expect(result.current.loading).toBe(false);
+      expect(onError).toHaveBeenCalledWith(
+        expect.objectContaining({
+          code: 'FETCH_BALANCE_ERROR',
+          message: 'Creator not found',
+        })
+      );
+    });
+
+    it('handles API response with success: false', async () => {
+      mockRequest.mockResolvedValueOnce({
         success: false,
-        error: { message: 'Creator not found' },
+        error: { message: 'Earnings unavailable' },
       });
 
-      const response = await mockClient.request('GET', '/api/v1/wallet/creator-invalid/balance');
-
-      expect(response.success).toBe(false);
-      expect(response.error.message).toBe('Creator not found');
-    });
-  });
-
-  describe('refetch', () => {
-    it('should refetch latest balance', async () => {
-      const firstResponse = {
-        success: true,
-        data: { totalEarnings: 5000, availableBalance: 4500, pendingBalance: 500 },
-      };
-
-      const secondResponse = {
-        success: true,
-        data: { totalEarnings: 5500, availableBalance: 5000, pendingBalance: 500 },
-      };
-
-      mockClient.request.mockResolvedValueOnce(firstResponse).mockResolvedValueOnce(secondResponse);
-
-      const response1 = await mockClient.request('GET', '/api/v1/wallet/creator-123/balance');
-      expect(response1.data.totalEarnings).toBe(5000);
-
-      const response2 = await mockClient.request('GET', '/api/v1/wallet/creator-123/balance');
-      expect(response2.data.totalEarnings).toBe(5500);
-
-      expect(mockClient.request).toHaveBeenCalledTimes(2);
-    });
-  });
-
-  describe('balance updates', () => {
-    it('should reflect pending to available balance transition', async () => {
-      const pendingResponse = {
-        success: true,
-        data: {
-          totalEarnings: 5000,
-          availableBalance: 4500,
-          pendingBalance: 500,
-        },
-      };
-
-      const confirmedResponse = {
-        success: true,
-        data: {
-          totalEarnings: 5000,
-          availableBalance: 5000,
-          pendingBalance: 0,
-        },
-      };
-
-      mockClient.request
-        .mockResolvedValueOnce(pendingResponse)
-        .mockResolvedValueOnce(confirmedResponse);
-
-      const response1 = await mockClient.request('GET', '/api/v1/wallet/creator-123/balance');
-      expect(response1.data.pendingBalance).toBe(500);
-
-      const response2 = await mockClient.request('GET', '/api/v1/wallet/creator-123/balance');
-      expect(response2.data.pendingBalance).toBe(0);
-      expect(response2.data.availableBalance).toBe(5000);
-    });
-  });
-
-  describe('zero balances', () => {
-    it('should handle creator with no earnings', async () => {
-      mockClient.request.mockResolvedValue({
-        success: true,
-        data: {
-          totalEarnings: 0,
-          availableBalance: 0,
-          pendingBalance: 0,
-          lumens: '0',
-          usdc: '0',
-        },
+      const onError = vi.fn();
+      const { result } = renderHook(() => useCreatorBalance(undefined, false), {
+        wrapper: wrapperFor({ onError }),
       });
 
-      const response = await mockClient.request('GET', '/api/v1/wallet/creator-new/balance');
+      await act(async () => {
+        try {
+          await result.current.fetchBalance('creator-1');
+        } catch {
+          // Expected rejection
+        }
+      });
 
-      expect(response.data.totalEarnings).toBe(0);
-      expect(response.data.availableBalance).toBe(0);
+      expect(result.current.error).toBe('Earnings unavailable');
+      expect(result.current.loading).toBe(false);
+      expect(onError).toHaveBeenCalledWith(
+        expect.objectContaining({
+          code: 'FETCH_BALANCE_ERROR',
+          message: 'Earnings unavailable',
+        })
+      );
+    });
+
+    it('auto-fetch failure updates state and logs without unhandled promise rejection', async () => {
+      mockRequest.mockRejectedValue(new Error('Network offline'));
+
+      const { result } = renderHook(() => useCreatorBalance('creator-auto', true), {
+        wrapper: wrapperFor(),
+      });
+
+      await waitFor(() => {
+        expect(result.current.error).toBe('Network offline');
+      });
+      expect(result.current.loading).toBe(false);
+      await waitFor(() => {
+        expect(consoleError).toHaveBeenCalledWith(
+          expect.stringContaining('useCreatorBalance auto-fetch failed'),
+          expect.any(Error)
+        );
+      });
+    });
+
+    it('auto-fetches again when the creator id changes', async () => {
+      mockRequest.mockResolvedValue({
+        success: true,
+        data: { totalEarnings: 100, pendingBalance: 10 },
+      });
+
+      const { rerender } = renderHook(
+        ({ creatorId }: { creatorId: string }) => useCreatorBalance(creatorId, true),
+        { initialProps: { creatorId: 'creator-1' }, wrapper: wrapperFor() }
+      );
+
+      await waitFor(() => expect(mockRequest).toHaveBeenCalledTimes(1));
+      rerender({ creatorId: 'creator-2' });
+      await waitFor(() => expect(mockRequest).toHaveBeenCalledTimes(2));
+
+      expect(mockRequest.mock.calls.map((call) => call[1])).toEqual([
+        '/api/v1/creators/creator-1/earnings',
+        '/api/v1/creators/creator-2/earnings',
+      ]);
+    });
+
+    it('ignores an older creator response that resolves after the latest one', async () => {
+      const resolveRequests: Array<(value: unknown) => void> = [];
+      mockRequest.mockImplementation(
+        () => new Promise((resolve) => resolveRequests.push(resolve))
+      );
+
+      const { result, rerender } = renderHook(
+        ({ creatorId }: { creatorId: string }) => useCreatorBalance(creatorId, true),
+        { initialProps: { creatorId: 'creator-1' }, wrapper: wrapperFor() }
+      );
+      rerender({ creatorId: 'creator-2' });
+
+      await act(async () => {
+        resolveRequests[1]?.({
+          success: true,
+          data: { totalEarnings: 200, pendingBalance: 20 },
+        });
+        await Promise.resolve();
+      });
+      await waitFor(() => expect(result.current.balance?.totalEarnings).toBe(200));
+
+      await act(async () => {
+        resolveRequests[0]?.({
+          success: true,
+          data: { totalEarnings: 100, pendingBalance: 10 },
+        });
+        await Promise.resolve();
+      });
+
+      expect(result.current.balance?.totalEarnings).toBe(200);
     });
   });
 
-  describe('reset', () => {
-    it('should reset balance state', () => {
-      const state = {
-        balance: undefined,
-        loading: false,
-        error: undefined,
-        lastUpdated: undefined,
-        reset: function () {
-          this.balance = undefined;
-          this.loading = false;
-          this.error = undefined;
-          this.lastUpdated = undefined;
-        },
-      };
+  describe('refetch and reset', () => {
+    it('refetches latest balance using stored creatorId and walletId', async () => {
+      mockRequest
+        .mockResolvedValueOnce({
+          success: true,
+          data: { totalEarnings: 100, pendingBalance: 10 },
+        })
+        .mockResolvedValueOnce({
+          success: true,
+          data: { lumens: '10' },
+        })
+        .mockResolvedValueOnce({
+          success: true,
+          data: { totalEarnings: 150, pendingBalance: 0 },
+        })
+        .mockResolvedValueOnce({
+          success: true,
+          data: { lumens: '15' },
+        });
 
-      state.balance = { totalEarnings: 100, availableBalance: 100, pendingBalance: 0 };
-      state.lastUpdated = Date.now();
+      const { result } = renderHook(() => useCreatorBalance(undefined, false), {
+        wrapper: wrapperFor(),
+      });
 
-      state.reset();
+      await act(async () => {
+        await result.current.fetchBalance('creator-1', 'wallet-1');
+      });
 
-      expect(state.balance).toBeUndefined();
-      expect(state.lastUpdated).toBeUndefined();
-      expect(state.loading).toBe(false);
+      expect(result.current.balance?.totalEarnings).toBe(100);
+
+      await act(async () => {
+        await result.current.refetch();
+      });
+
+      expect(result.current.balance?.totalEarnings).toBe(150);
+      expect(mockRequest).toHaveBeenCalledTimes(4);
+    });
+
+    it('resets balance, loading, and tracking refs', async () => {
+      mockRequest.mockResolvedValueOnce({
+        success: true,
+        data: { totalEarnings: 100, pendingBalance: 10 },
+      });
+
+      const { result } = renderHook(() => useCreatorBalance(undefined, false), {
+        wrapper: wrapperFor(),
+      });
+
+      await act(async () => {
+        await result.current.fetchBalance('creator-1');
+      });
+
+      expect(result.current.balance).toBeDefined();
+
+      act(() => {
+        result.current.reset();
+      });
+
+      expect(result.current.balance).toBeUndefined();
+      expect(result.current.loading).toBe(false);
+      expect(result.current.lastUpdated).toBeUndefined();
+
+      // refetch after reset does not trigger a request
+      mockRequest.mockClear();
+      await act(async () => {
+        await result.current.refetch();
+      });
+      expect(mockRequest).not.toHaveBeenCalled();
     });
   });
 
-  describe('stale closure fixes', () => {
-    it('refetch should keep creator and wallet after dependency change', () => {
-      const refs = {
-        creatorId: undefined as string | undefined,
-        walletId: undefined as string | undefined,
-        calls: [] as Array<{ id: string; walletId?: string }>,
-      };
+  describe('race conditions and cleanup', () => {
+    it('handles rapid successive calls maintaining latest creator filter', async () => {
+      mockRequest
+        .mockResolvedValueOnce({
+          success: true,
+          data: { totalEarnings: 100, pendingBalance: 10 },
+        })
+        .mockResolvedValueOnce({
+          success: true,
+          data: { totalEarnings: 200, pendingBalance: 20 },
+        });
 
-      const fetchBalance = (id: string, walletId?: string) => {
-        refs.creatorId = id;
-        if (walletId !== undefined) refs.walletId = walletId;
-        refs.calls.push({ id, walletId: refs.walletId });
-      };
+      const { result } = renderHook(() => useCreatorBalance(undefined, false), {
+        wrapper: wrapperFor(),
+      });
 
-      fetchBalance('creator-1', 'wallet-9');
-      // Switch creator, keep wallet via ref
-      fetchBalance('creator-2', refs.walletId);
+      await act(async () => {
+        const p1 = result.current.fetchBalance('creator-1');
+        const p2 = result.current.fetchBalance('creator-2');
+        await Promise.all([p1, p2]);
+      });
 
-      const refetch = () => {
-        if (refs.creatorId) fetchBalance(refs.creatorId, refs.walletId);
-      };
-      refetch();
+      expect(result.current.balance?.totalEarnings).toBe(200);
 
-      expect(refs.calls[0]).toEqual({ id: 'creator-1', walletId: 'wallet-9' });
-      expect(refs.calls[1]).toEqual({ id: 'creator-2', walletId: 'wallet-9' });
-      expect(refs.calls[2]).toEqual({ id: 'creator-2', walletId: 'wallet-9' });
+      // refetch now fetches creator-2
+      mockRequest.mockResolvedValueOnce({
+        success: true,
+        data: { totalEarnings: 250, pendingBalance: 20 },
+      });
+
+      await act(async () => {
+        await result.current.refetch();
+      });
+
+      expect(mockRequest).toHaveBeenLastCalledWith(
+        'GET',
+        '/api/v1/creators/creator-2/earnings',
+        undefined,
+        expect.any(Object)
+      );
+    });
+
+    it('aborts the previous in-flight request when the creator id changes', async () => {
+      const signals: AbortSignal[] = [];
+      mockRequest.mockImplementation(
+        (_method: string, _url: string, _body: unknown, opts?: { signal?: AbortSignal }) => {
+          if (opts?.signal) signals.push(opts.signal);
+          return new Promise((_resolve, reject) => {
+            opts?.signal?.addEventListener('abort', () => {
+              const err = new Error('Aborted');
+              err.name = 'AbortError';
+              reject(err);
+            });
+          });
+        }
+      );
+
+      const { rerender } = renderHook(
+        ({ creatorId }: { creatorId: string }) => useCreatorBalance(creatorId, true),
+        { initialProps: { creatorId: 'creator-1' }, wrapper: wrapperFor() }
+      );
+
+      await waitFor(() => expect(signals).toHaveLength(1));
+      rerender({ creatorId: 'creator-2' });
+      await waitFor(() => expect(signals).toHaveLength(2));
+
+      expect(signals[0]?.aborted).toBe(true);
+      expect(signals[1]?.aborted).toBe(false);
+    });
+
+    it('handles unmount mid-request without error', async () => {
+      let resolvePromise: (value: any) => void = () => undefined;
+      const delayedPromise = new Promise((resolve) => {
+        resolvePromise = resolve;
+      });
+      mockRequest.mockReturnValueOnce(delayedPromise);
+
+      const { result, unmount } = renderHook(() => useCreatorBalance(undefined, false), {
+        wrapper: wrapperFor(),
+      });
+
+      act(() => {
+        result.current.fetchBalance('creator-123');
+      });
+
+      expect(result.current.loading).toBe(true);
+
+      unmount();
+
+      await act(async () => {
+        resolvePromise({
+          success: true,
+          data: { totalEarnings: 100, pendingBalance: 0 },
+        });
+      });
     });
   });
 });

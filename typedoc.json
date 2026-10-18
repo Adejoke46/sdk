@@ -1,6 +1,8 @@
 {
   "name": "Dorisio SDK",
-  "entryPoints": ["src/index.ts"],
+  "entryPoints": [
+    "src/index.ts"
+  ],
   "out": "docs",
   "excludePrivate": true,
   "excludeProtected": true,
@@ -10,12 +12,15 @@
   "includeVersion": true,
   "readme": "README.md",
   "categorizeByGroup": true,
-  "sort": ["source-order", "alphabetical"],
+  "sort": [
+    "source-order",
+    "alphabetical"
+  ],
   "tsconfig": "./tsconfig.json",
   "theme": "default",
   "darkHighlightTheme": "dark-plus",
   "lightHighlightTheme": "light-plus",
-  "githubPages": false,
+  "githubPages": true,
   "searchInComments": true,
   "commentStyle": "line",
   "disableSources": false,
@@ -35,5 +40,9 @@
     "Interface",
     "TypeAlias",
     "Enum"
-  ]
+  ],
+  "cleanOutputDir": true,
+  "navigationLinks": {
+    "GitHub": "https://github.com/Dorisio/sdk"
+  }
 }

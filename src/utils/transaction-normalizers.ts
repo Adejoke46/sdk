@@ -1,7 +1,7 @@
 /**
  * Transaction History Normalizers
  *
- * Specialized normalization for transaction history responses.
+ * Specialised normalisation for transaction history responses.
  */
 
 import {
@@ -10,12 +10,13 @@ import {
   TransactionStats,
   TransactionWithDetails,
 } from '../types/models';
+import { ApiTransactionStatsSchema } from '../types/schemas';
 import { normalizeTransaction, normalizeTransactions } from './normalizers';
 
 /**
- * Normalize transaction history with pagination metadata
+ * Normalize transaction history with pagination metadata.
  */
-export function normalizeTransactionHistoryResponse(data: any): TransactionHistory {
+export function normalizeTransactionHistoryResponse(data: unknown): TransactionHistory {
   if (!data || typeof data !== 'object') {
     return {
       transactions: [],
@@ -25,54 +26,64 @@ export function normalizeTransactionHistoryResponse(data: any): TransactionHisto
     };
   }
 
-  const transactions = Array.isArray(data.transactions)
-    ? normalizeTransactions(data.transactions)
+  const obj = data as Record<string, unknown>;
+  const transactions = Array.isArray(obj['transactions'])
+    ? normalizeTransactions(obj['transactions'])
     : [];
 
   return {
     transactions,
-    total: Number(data.total || transactions.length),
-    page: Number(data.page || 1),
-    pageSize: Number(data.pageSize || 20),
+    total: Number(obj['total'] ?? transactions.length),
+    page: Number(obj['page'] ?? 1),
+    pageSize: Number(obj['pageSize'] ?? 20),
   };
 }
 
 /**
- * Calculate pagination metadata
+ * Calculate pagination metadata.
  */
-export function calculatePaginationMetadata(total: number, page: number, pageSize: number) {
+export function calculatePaginationMetadata(
+  total: number,
+  page: number,
+  pageSize: number
+): {
+  totalPages: number;
+  hasNextPage: boolean;
+  hasPreviousPage: boolean;
+  currentPage: number;
+  pageSize: number;
+} {
   const totalPages = Math.ceil(total / pageSize);
-  const hasNextPage = page < totalPages;
-  const hasPreviousPage = page > 1;
-
   return {
     totalPages,
-    hasNextPage,
-    hasPreviousPage,
+    hasNextPage: page < totalPages,
+    hasPreviousPage: page > 1,
     currentPage: page,
     pageSize,
   };
 }
 
 /**
- * Normalize transaction with details (user + creator info)
+ * Normalize transaction with details (user + creator info).
  */
-export function normalizeTransactionWithDetails(data: any): TransactionWithDetails {
+export function normalizeTransactionWithDetails(data: unknown): TransactionWithDetails {
   if (!data || typeof data !== 'object') {
     throw new Error('Invalid transaction details');
   }
 
+  const obj = data as Record<string, unknown>;
+
   return {
     ...normalizeTransaction(data),
-    fromUser: data.fromUser || {},
-    creator: data.creator || {},
+    fromUser: (obj['fromUser'] as TransactionWithDetails['fromUser']) ?? ({} as TransactionWithDetails['fromUser']),
+    creator: (obj['creator'] as TransactionWithDetails['creator']) ?? ({} as TransactionWithDetails['creator']),
   };
 }
 
 /**
- * Normalize array of transactions with details
+ * Normalize array of transactions with details.
  */
-export function normalizeTransactionsWithDetails(data: any[]): TransactionWithDetails[] {
+export function normalizeTransactionsWithDetails(data: unknown): TransactionWithDetails[] {
   if (!Array.isArray(data)) {
     return [];
   }
@@ -80,7 +91,7 @@ export function normalizeTransactionsWithDetails(data: any[]): TransactionWithDe
 }
 
 /**
- * Calculate transaction statistics from transaction array
+ * Calculate transaction statistics from transaction array.
  */
 export function calculateTransactionStats(transactions: Transaction[]): TransactionStats {
   if (!Array.isArray(transactions) || transactions.length === 0) {
@@ -95,7 +106,6 @@ export function calculateTransactionStats(transactions: Transaction[]): Transact
   const totalAmount = transactions.reduce((sum, tx) => sum + tx.amount, 0);
   const averageAmount = totalAmount / transactions.length;
 
-  // Sort by date to find last transaction
   const sorted = [...transactions].sort(
     (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
   );
@@ -104,12 +114,26 @@ export function calculateTransactionStats(transactions: Transaction[]): Transact
     totalTransactions: transactions.length,
     totalAmount,
     averageAmount: Math.round(averageAmount * 100) / 100,
-    lastTransactionDate: sorted[0]?.createdAt || null,
+    lastTransactionDate: sorted[0]?.createdAt ?? null,
   };
 }
 
 /**
- * Filter transactions by status
+ * Normalize raw transaction stats API response.
+ * Validated via Zod before mapping.
+ */
+export function normalizeTransactionStats(data: unknown): TransactionStats {
+  const parsed = ApiTransactionStatsSchema.parse(data);
+  return {
+    totalTransactions: parsed.totalTransactions,
+    totalAmount: parsed.totalAmount,
+    averageAmount: parsed.averageAmount,
+    lastTransactionDate: parsed.lastTransactionDate ?? null,
+  };
+}
+
+/**
+ * Filter transactions by status.
  */
 export function filterTransactionsByStatus(
   transactions: Transaction[],
@@ -122,7 +146,7 @@ export function filterTransactionsByStatus(
 }
 
 /**
- * Filter transactions by date range
+ * Filter transactions by date range.
  */
 export function filterTransactionsByDateRange(
   transactions: Transaction[],
@@ -143,7 +167,7 @@ export function filterTransactionsByDateRange(
 }
 
 /**
- * Group transactions by creator
+ * Group transactions by creator.
  */
 export function groupTransactionsByCreator(
   transactions: Transaction[]
@@ -152,25 +176,26 @@ export function groupTransactionsByCreator(
     return {};
   }
 
-  return transactions.reduce(
-    (acc, tx) => {
-      const creatorId = tx.creatorId;
-      if (!acc[creatorId]) {
-        acc[creatorId] = [];
-      }
-      acc[creatorId].push(tx);
-      return acc;
-    },
-    {} as Record<string, Transaction[]>
-  );
+  return transactions.reduce<Record<string, Transaction[]>>((acc, tx) => {
+    const creatorId = tx.creatorId;
+    if (!acc[creatorId]) {
+      acc[creatorId] = [];
+    }
+    const bucket = acc[creatorId];
+    if (bucket) {
+      bucket.push(tx);
+    }
+    return acc;
+  }, {});
 }
 
 /**
- * Enrich transaction history with computed fields
+ * Enrich transaction history with computed fields.
  */
-export function enrichTransactionHistory(
-  history: TransactionHistory
-): TransactionHistory & { stats: TransactionStats; pagination: any } {
+export function enrichTransactionHistory(history: TransactionHistory): TransactionHistory & {
+  stats: TransactionStats;
+  pagination: ReturnType<typeof calculatePaginationMetadata>;
+} {
   const stats = calculateTransactionStats(history.transactions);
   const pagination = calculatePaginationMetadata(history.total, history.page, history.pageSize);
 

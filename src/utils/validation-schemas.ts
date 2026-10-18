@@ -61,6 +61,14 @@ export const PaginationSchema = z.object({
   pageSize: z.number().int().positive().max(100).default(20),
 });
 
+/** Signed webhook event. The timestamp is a Unix millisecond value. */
+export const WebhookPayloadSchema = z.object({
+  id: z.string().min(1),
+  timestamp: z.number().int().positive().finite(),
+  event: z.string().min(1),
+  data: z.record(z.unknown()),
+});
+
 /**
  * Validation helper
  */

@@ -59,7 +59,6 @@ export function generateEnvExample(options: Pick<InitOptions, 'framework' | 'aut
 }
 
 export function generateDorisioConfig(options: Pick<InitOptions, 'framework' | 'auth' | 'database'>): string {
-  const p = envPrefix(options.framework);
   const apiExpr =
     options.framework === 'vanilla'
       ? "process.env.DORISIO_API_URL || 'http://localhost:3000'"

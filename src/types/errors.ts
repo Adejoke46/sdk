@@ -1,15 +1,33 @@
+import type { ErrorI18nMetadata } from './i18n';
+
 /**
  * Base error class for all SDK errors
  */
 export class DorisioError extends Error {
   public readonly statusCode?: number;
   public readonly code?: string;
+  public requestId?: string;
+  public i18n?: ErrorI18nMetadata;
+  /**
+   * Whether the failed operation can safely be attempted again.
+   * Defaults to `false`. Transient failures such as `RateLimitError` and
+   * `NetworkError` set it to `true`.
+   */
+  public readonly retryable: boolean;
 
-  constructor(message: string, statusCode?: number, code?: string) {
+  constructor(
+    message: string,
+    statusCode?: number,
+    code?: string,
+    requestId?: string,
+    retryable = false
+  ) {
     super(message);
     this.name = this.constructor.name;
     this.statusCode = statusCode;
     this.code = code;
+    this.requestId = requestId;
+    this.retryable = retryable;
     Error.captureStackTrace(this, this.constructor);
   }
 }
@@ -18,8 +36,8 @@ export class DorisioError extends Error {
  * Authentication-related errors
  */
 export class AuthError extends DorisioError {
-  constructor(message: string, statusCode?: number, code?: string) {
-    super(message, statusCode, code);
+  constructor(message: string, statusCode?: number, code?: string, requestId?: string) {
+    super(message, statusCode, code, requestId);
     this.name = 'AuthError';
   }
 }
@@ -30,8 +48,14 @@ export class AuthError extends DorisioError {
 export class WalletVerificationError extends DorisioError {
   public readonly challenge?: string;
 
-  constructor(message: string, statusCode?: number, code?: string, challenge?: string) {
-    super(message, statusCode, code);
+  constructor(
+    message: string,
+    statusCode?: number,
+    code?: string,
+    challenge?: string,
+    requestId?: string
+  ) {
+    super(message, statusCode, code, requestId);
     this.name = 'WalletVerificationError';
     this.challenge = challenge;
   }
@@ -43,8 +67,14 @@ export class WalletVerificationError extends DorisioError {
 export class PaymentError extends DorisioError {
   public readonly transactionHash?: string;
 
-  constructor(message: string, statusCode?: number, code?: string, transactionHash?: string) {
-    super(message, statusCode, code);
+  constructor(
+    message: string,
+    statusCode?: number,
+    code?: string,
+    transactionHash?: string,
+    requestId?: string
+  ) {
+    super(message, statusCode, code, requestId);
     this.name = 'PaymentError';
     this.transactionHash = transactionHash;
   }
@@ -54,10 +84,10 @@ export class PaymentError extends DorisioError {
  * Validation errors for SDK inputs
  */
 export class ValidationError extends DorisioError {
-  public readonly details?: Record<string, any>;
+  public readonly details?: Record<string, unknown>;
 
-  constructor(message: string, details?: Record<string, any>) {
-    super(message, 400, 'VALIDATION_ERROR');
+  constructor(message: string, details?: Record<string, unknown>, requestId?: string) {
+    super(message, 400, 'VALIDATION_ERROR', requestId);
     this.name = 'ValidationError';
     this.details = details;
   }
@@ -68,11 +98,37 @@ export class ValidationError extends DorisioError {
  */
 export class RateLimitError extends DorisioError {
   public readonly retryAfter?: number;
+  public readonly rateLimit?: RateLimitMetadata;
 
-  constructor(message: string, retryAfter?: number) {
-    super(message, 429, 'RATE_LIMITED');
+  constructor(
+    message: string,
+    retryAfter?: number,
+    requestId?: string,
+    rateLimit?: RateLimitMetadata
+  ) {
+    super(message, 429, 'RATE_LIMITED', requestId, true);
     this.name = 'RateLimitError';
     this.retryAfter = retryAfter;
+    this.rateLimit = rateLimit;
+  }
+}
+
+/**
+ * Backpressure error raised when a request is rejected because the request
+ * queue has reached its configured `maxQueueSize`.
+ */
+export class QueueFullError extends DorisioError {
+  public readonly maxQueueSize: number;
+
+  constructor(maxQueueSize: number, message?: string, requestId?: string) {
+    super(
+      message ?? `Request queue is full (maxQueueSize: ${maxQueueSize})`,
+      429,
+      'QUEUE_FULL',
+      requestId
+    );
+    this.name = 'QueueFullError';
+    this.maxQueueSize = maxQueueSize;
   }
 }
 
@@ -80,46 +136,134 @@ export class RateLimitError extends DorisioError {
  * Network/timeout errors
  */
 export class TimeoutError extends DorisioError {
-  constructor(message: string = 'Request timeout', _timeoutMs?: number) {
-    super(message, 408, 'TIMEOUT');
+  constructor(message: string = 'Request timeout', _timeoutMs?: number, requestId?: string) {
+    super(message, 408, 'TIMEOUT', requestId);
     this.name = 'TimeoutError';
   }
+}
+
+/**
+ * Error handler context information
+ */
+export interface ErrorHandlerContext {
+  /** The request method */
+  method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+  /** The request path */
+  path: string;
+  /** The request body (if any) */
+  body?: unknown;
+  /** Request headers */
+  headers?: Record<string, string>;
+  /** Current retry attempt number */
+  attempt?: number;
+  /** Request ID for tracking */
+  requestId?: string;
+}
+
+/**
+ * Error handler action result
+ */
+export type ErrorHandlerAction =
+  | { action: 'retry'; delayMs?: number }
+  | { action: 'fallback'; fallbackValue: unknown }
+  | { action: 'throw' };
+
+/**
+ * Error handler function signature
+ */
+export type ErrorHandler = (
+  error: DorisioError,
+  context: ErrorHandlerContext
+) => ErrorHandlerAction | Promise<ErrorHandlerAction>;
+
+/**
+ * Middleware context for request/response transformation
+ */
+export interface MiddlewareContext {
+  /** The request method */
+  method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+  /** The request path */
+  path: string;
+  /** The request body (if any) */
+  body?: unknown;
+  /** Request headers */
+  headers?: Record<string, string>;
+  /** Request ID for tracking */
+  requestId?: string;
+}
+
+/**
+ * Middleware function signature for request/response transformation
+ */
+export type Middleware = (
+  context: MiddlewareContext,
+  next: () => Promise<unknown>
+) => Promise<unknown>;
+
+export interface RateLimitMetadata {
+  limit?: number;
+  remaining?: number;
+  /** Unix timestamp in seconds from X-RateLimit-Reset. */
+  reset?: number;
 }
 
 /**
  * Legacy error classes (for backward compatibility)
  */
 export class ApiError extends DorisioError {
-  constructor(message: string, statusCode?: number, code?: string) {
-    super(message, statusCode, code);
+  /** Server-requested wait duration in seconds. */
+  public readonly retryAfter?: number;
+  public readonly rateLimit?: RateLimitMetadata;
+
+  constructor(
+    message: string,
+    statusCode?: number,
+    code?: string,
+    retryAfter?: number,
+    requestId?: string,
+    rateLimit?: RateLimitMetadata
+  ) {
+    super(message, statusCode, code, requestId);
     this.name = 'ApiError';
+    this.retryAfter = retryAfter;
+    this.rateLimit = rateLimit;
   }
 }
 
 export class AuthenticationError extends DorisioError {
-  constructor(message: string = 'Authentication required') {
-    super(message, 401, 'UNAUTHORIZED');
+  constructor(message: string = 'Authentication required', requestId?: string) {
+    super(message, 401, 'UNAUTHORIZED', requestId);
     this.name = 'AuthenticationError';
   }
 }
 
 export class AuthorizationError extends DorisioError {
-  constructor(message: string = 'Insufficient permissions') {
-    super(message, 403, 'FORBIDDEN');
+  constructor(message: string = 'Insufficient permissions', requestId?: string) {
+    super(message, 403, 'FORBIDDEN', requestId);
     this.name = 'AuthorizationError';
   }
 }
 
 export class NotFoundError extends DorisioError {
-  constructor(message: string = 'Resource not found') {
-    super(message, 404, 'NOT_FOUND');
+  constructor(message: string = 'Resource not found', requestId?: string) {
+    super(message, 404, 'NOT_FOUND', requestId);
     this.name = 'NotFoundError';
   }
 }
 
 export class NetworkError extends DorisioError {
-  constructor(message: string = 'Network error') {
-    super(message, 0, 'NETWORK_ERROR');
+  constructor(message: string = 'Network error', requestId?: string) {
+    super(message, 0, 'NETWORK_ERROR', requestId, true);
     this.name = 'NetworkError';
+  }
+}
+
+/**
+ * Server error (5xx responses)
+ */
+export class ServerError extends DorisioError {
+  constructor(message: string = 'Server error', statusCode = 500, requestId?: string) {
+    super(message, statusCode, 'SERVER_ERROR', requestId, true);
+    this.name = 'ServerError';
   }
 }

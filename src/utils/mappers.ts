@@ -2,9 +2,17 @@
  * Response Mappers
  *
  * Transforms backend responses into SDK models.
+ * Uses the same Zod-backed normalizers under the hood — no `any` at the
+ * boundary; unknown data is narrowed before access.
  */
 
 import { Creator, User, Transaction, Wallet, TransactionHistory } from '../types/models';
+import {
+  normalizeCreator,
+  normalizeUser,
+  normalizeTransaction,
+  normalizeWallet,
+} from './normalizers';
 
 /**
  * Creator mapper
@@ -13,27 +21,14 @@ export class CreatorMapper {
   /**
    * Map backend creator response to SDK model
    */
-  static fromApi(data: any): Creator {
-    return {
-      id: data.id,
-      userId: data.userId,
-      username: data.username,
-      displayName: data.displayName || null,
-      bio: data.bio || null,
-      avatar: data.avatar || null,
-      verified: data.verified || false,
-      isPublic: data.isPublic !== false,
-      totalEarnings: data.totalEarnings || 0,
-      pendingBalance: data.pendingBalance || 0,
-      createdAt: data.createdAt,
-      updatedAt: data.updatedAt,
-    };
+  static fromApi(data: unknown): Creator {
+    return normalizeCreator(data);
   }
 
   /**
    * Map array of creators
    */
-  static fromApiArray(data: any[]): Creator[] {
+  static fromApiArray(data: unknown[]): Creator[] {
     return data.map((item) => this.fromApi(item));
   }
 }
@@ -45,17 +40,8 @@ export class UserMapper {
   /**
    * Map backend user response to SDK model
    */
-  static fromApi(data: any): User {
-    return {
-      id: data.id,
-      email: data.email,
-      name: data.name || null,
-      role: data.role || 'fan',
-      verified: data.verified || false,
-      avatar: data.avatar || null,
-      createdAt: data.createdAt,
-      updatedAt: data.updatedAt,
-    };
+  static fromApi(data: unknown): User {
+    return normalizeUser(data);
   }
 }
 
@@ -66,36 +52,30 @@ export class TransactionMapper {
   /**
    * Map backend transaction response to SDK model
    */
-  static fromApi(data: any): Transaction {
-    return {
-      id: data.id,
-      fromUserId: data.fromUserId,
-      creatorId: data.creatorId,
-      amount: data.amount,
-      message: data.message || null,
-      status: data.stellarStatus || data.status || 'pending',
-      stellarTxHash: data.stellarTxHash || null,
-      createdAt: data.createdAt,
-      updatedAt: data.updatedAt,
-    };
+  static fromApi(data: unknown): Transaction {
+    return normalizeTransaction(data);
   }
 
   /**
    * Map array of transactions
    */
-  static fromApiArray(data: any[]): Transaction[] {
+  static fromApiArray(data: unknown[]): Transaction[] {
     return data.map((item) => this.fromApi(item));
   }
 
   /**
    * Map transaction history response
    */
-  static mapHistory(data: any): TransactionHistory {
+  static mapHistory(data: unknown): TransactionHistory {
+    if (!data || typeof data !== 'object') {
+      return { transactions: [], total: 0, page: 1, pageSize: 20 };
+    }
+    const obj = data as Record<string, unknown>;
     return {
-      transactions: this.fromApiArray(data.transactions || []),
-      total: data.total || 0,
-      page: data.page || 1,
-      pageSize: data.pageSize || 20,
+      transactions: this.fromApiArray(Array.isArray(obj['transactions']) ? obj['transactions'] : []),
+      total: Number(obj['total'] ?? 0),
+      page: Number(obj['page'] ?? 1),
+      pageSize: Number(obj['pageSize'] ?? 20),
     };
   }
 }
@@ -107,22 +87,14 @@ export class WalletMapper {
   /**
    * Map backend wallet response to SDK model
    */
-  static fromApi(data: any): Wallet {
-    return {
-      id: data.id,
-      userId: data.userId,
-      publicKey: data.publicKey,
-      name: data.name || null,
-      verified: data.verified || false,
-      createdAt: data.createdAt,
-      updatedAt: data.updatedAt,
-    };
+  static fromApi(data: unknown): Wallet {
+    return normalizeWallet(data);
   }
 
   /**
    * Map array of wallets
    */
-  static fromApiArray(data: any[]): Wallet[] {
+  static fromApiArray(data: unknown[]): Wallet[] {
     return data.map((item) => this.fromApi(item));
   }
 }
@@ -134,7 +106,7 @@ export class ResponseMapper {
   /**
    * Map response based on type
    */
-  static mapResponse<T>(data: any, type: string): T {
+  static mapResponse<T>(data: unknown, type: string): T {
     switch (type) {
       case 'creator':
         return CreatorMapper.fromApi(data) as T;

@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import { WebhookPayloadSchema } from './validation-schemas';
 
 /**
  * Webhook event payload structure
@@ -10,6 +11,17 @@ export interface WebhookPayload {
   data: Record<string, any>;
 }
 
+export interface WebhookVerificationOptions {
+  /** Unix timestamp in milliseconds from x-dorisio-timestamp. Required for replay protection. */
+  timestamp: number | string;
+  /** Maximum age in milliseconds (default: five minutes). */
+  maxAge?: number;
+  /** Allowed future clock skew in milliseconds (default: five minutes). */
+  clockSkew?: number;
+  /** Override the current time in milliseconds, useful for deterministic tests. */
+  now?: number;
+}
+
 /**
  * Verifies webhook signature to ensure authenticity
  * Uses HMAC-SHA256 for signature verification
@@ -17,6 +29,11 @@ export interface WebhookPayload {
  * @param payload - The webhook payload (JSON string or object)
  * @param signature - The signature header from the webhook request
  * @param secret - Your webhook secret from Dorisio dashboard
+ * @param options - Pass the signed timestamp to enforce replay protection. Without options,
+ * verification retains the original body-only signature behavior for existing integrations.
+ * Timestamp mode signs `${timestamp}.${rawBody}` and rejects timestamps older than maxAge
+ * or further in the future than clockSkew. A timestamp window alone does not prevent
+ * duplicate delivery within that window; persist event IDs if exactly-once processing is needed.
  * @returns true if signature is valid, false otherwise
  *
  * @example
@@ -30,38 +47,38 @@ export interface WebhookPayload {
  * ```
  */
 export function verifyWebhookSignature(
-  payload: string | Record<string, any>,
+  payload: string | Buffer | Record<string, any>,
   signature: string,
-  secret: string
+  secret: string,
+  options?: WebhookVerificationOptions
 ): boolean {
   try {
-    // Normalize payload to string
-    const payloadString = typeof payload === 'string' ? payload : JSON.stringify(payload);
+    if (typeof signature !== 'string' || !/^[a-fA-F0-9]{64}$/.test(signature) || !secret) return false;
+    const payloadBytes = Buffer.isBuffer(payload)
+      ? payload
+      : Buffer.from(typeof payload === 'string' ? payload : JSON.stringify(payload));
+    let signedBytes = payloadBytes;
+    if (options) {
+      const timestamp = String(options.timestamp);
+      const maxAge = options.maxAge ?? 5 * 60 * 1000;
+      const clockSkew = options.clockSkew ?? 5 * 60 * 1000;
+      const now = options.now ?? Date.now();
+      if (!/^[1-9]\d*$/.test(timestamp) || !Number.isSafeInteger(Number(timestamp)) ||
+          !Number.isFinite(maxAge) || maxAge < 0 || !Number.isFinite(clockSkew) || clockSkew < 0 ||
+          !Number.isFinite(now) || Number(timestamp) < now - maxAge ||
+          Number(timestamp) > now + clockSkew) return false;
+      signedBytes = Buffer.concat([Buffer.from(`${timestamp}.`), payloadBytes]);
+    }
 
-    // Create HMAC-SHA256 signature
     const expectedSignature = crypto
       .createHmac('sha256', secret)
-      .update(payloadString)
-      .digest('hex');
+      .update(signedBytes)
+      .digest();
 
-    // Use constant-time comparison to prevent timing attacks
-    return constantTimeEqual(signature, expectedSignature);
+    return crypto.timingSafeEqual(Buffer.from(signature, 'hex'), expectedSignature);
   } catch {
     return false;
   }
-}
-
-/**
- * Constant-time string comparison to prevent timing attacks
- */
-function constantTimeEqual(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
-
-  let result = 0;
-  for (let i = 0; i < a.length; i++) {
-    result |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  }
-  return result === 0;
 }
 
 /**
@@ -85,7 +102,7 @@ export function parseWebhookPayload(payload: unknown): WebhookPayload {
     throw new Error('Invalid webhook payload: must be an object');
   }
 
-  const p = payload as Record<string, any>;
+  const p = payload as Record<string, unknown>;
 
   if (!p.id || typeof p.id !== 'string') {
     throw new Error('Invalid webhook payload: missing or invalid id');
@@ -99,11 +116,13 @@ export function parseWebhookPayload(payload: unknown): WebhookPayload {
     throw new Error('Invalid webhook payload: missing or invalid event');
   }
 
-  if (!p.data || typeof p.data !== 'object') {
+  if (!p.data || typeof p.data !== 'object' || Array.isArray(p.data)) {
     throw new Error('Invalid webhook payload: missing or invalid data');
   }
 
-  return p as WebhookPayload;
+  const result = WebhookPayloadSchema.safeParse(payload);
+  if (!result.success) throw new Error('Invalid webhook payload: malformed fields');
+  return result.data as WebhookPayload;
 }
 
 /**

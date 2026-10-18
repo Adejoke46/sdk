@@ -1,0 +1,165 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`normalizer snapshots > applies schema defaults for missing optional fields and rejects invalid input > creator-minimal 1`] = `
+{
+  "avatar": null,
+  "bio": null,
+  "createdAt": "<generated>",
+  "displayName": null,
+  "id": "creator-minimal",
+  "isPublic": true,
+  "pendingBalance": 0,
+  "totalEarnings": 0,
+  "updatedAt": undefined,
+  "userId": "",
+  "username": "",
+  "verified": false,
+}
+`;
+
+exports[`normalizer snapshots > applies schema defaults for missing optional fields and rejects invalid input > transaction-minimal 1`] = `
+{
+  "amount": 0,
+  "createdAt": "<generated>",
+  "creatorId": "",
+  "fromUserId": "",
+  "id": "tx-minimal",
+  "message": null,
+  "status": "pending",
+  "stellarTxHash": null,
+  "updatedAt": undefined,
+}
+`;
+
+exports[`normalizer snapshots > applies schema defaults for missing optional fields and rejects invalid input > wallet-minimal 1`] = `
+{
+  "createdAt": "<generated>",
+  "id": "wallet-minimal",
+  "name": null,
+  "publicKey": "",
+  "updatedAt": undefined,
+  "userId": "",
+  "verified": false,
+}
+`;
+
+exports[`normalizer snapshots > normalizes creator, wallet, and transaction responses > creator 1`] = `
+{
+  "avatar": null,
+  "bio": "Builds useful things",
+  "createdAt": "2026-01-01T00:00:00.000Z",
+  "displayName": "Alice",
+  "id": "creator-1",
+  "isPublic": true,
+  "pendingBalance": 15,
+  "totalEarnings": 120,
+  "updatedAt": "2026-01-02T00:00:00.000Z",
+  "userId": "user-1",
+  "username": "alice",
+  "verified": true,
+}
+`;
+
+exports[`normalizer snapshots > normalizes creator, wallet, and transaction responses > transaction 1`] = `
+{
+  "amount": 25,
+  "createdAt": "2026-01-03T00:00:00.000Z",
+  "creatorId": "creator-1",
+  "fromUserId": "user-1",
+  "id": "tx-1",
+  "message": "Thank you",
+  "status": "confirmed",
+  "stellarTxHash": "hash-1",
+  "updatedAt": undefined,
+}
+`;
+
+exports[`normalizer snapshots > normalizes creator, wallet, and transaction responses > wallet 1`] = `
+{
+  "createdAt": "2026-01-01T00:00:00.000Z",
+  "id": "wallet-1",
+  "name": "Primary",
+  "publicKey": "GABC123",
+  "updatedAt": undefined,
+  "userId": "user-1",
+  "verified": true,
+}
+`;
+
+exports[`normalizer snapshots > normalizes history and mapper output consistently > history 1`] = `
+{
+  "page": 1,
+  "pageSize": 20,
+  "total": 1,
+  "transactions": [
+    {
+      "amount": 25,
+      "createdAt": "2026-01-03T00:00:00.000Z",
+      "creatorId": "creator-1",
+      "fromUserId": "user-1",
+      "id": "tx-1",
+      "message": "Thank you",
+      "status": "confirmed",
+      "stellarTxHash": "hash-1",
+      "updatedAt": undefined,
+    },
+  ],
+}
+`;
+
+exports[`normalizer snapshots > normalizes history and mapper output consistently > mappers 1`] = `
+{
+  "creator": {
+    "avatar": null,
+    "bio": "Builds useful things",
+    "createdAt": "2026-01-01T00:00:00.000Z",
+    "displayName": "Alice",
+    "id": "creator-1",
+    "isPublic": true,
+    "pendingBalance": 15,
+    "totalEarnings": 120,
+    "updatedAt": "2026-01-02T00:00:00.000Z",
+    "userId": "user-1",
+    "username": "alice",
+    "verified": true,
+  },
+  "history": {
+    "page": 1,
+    "pageSize": 20,
+    "total": 1,
+    "transactions": [
+      {
+        "amount": 25,
+        "createdAt": "2026-01-03T00:00:00.000Z",
+        "creatorId": "creator-1",
+        "fromUserId": "user-1",
+        "id": "tx-1",
+        "message": "Thank you",
+        "status": "confirmed",
+        "stellarTxHash": "hash-1",
+        "updatedAt": undefined,
+      },
+    ],
+  },
+  "transaction": {
+    "amount": 25,
+    "createdAt": "2026-01-03T00:00:00.000Z",
+    "creatorId": "creator-1",
+    "fromUserId": "user-1",
+    "id": "tx-1",
+    "message": "Thank you",
+    "status": "confirmed",
+    "stellarTxHash": "hash-1",
+    "updatedAt": undefined,
+  },
+  "wallet": {
+    "createdAt": "2026-01-01T00:00:00.000Z",
+    "id": "wallet-1",
+    "name": "Primary",
+    "publicKey": "GABC123",
+    "updatedAt": undefined,
+    "userId": "user-1",
+    "verified": true,
+  },
+}
+`;

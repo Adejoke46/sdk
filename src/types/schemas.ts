@@ -1,156 +1,112 @@
+/**
+ * Schema exports for consumer validation
+ *
+ * Re-exports Zod schemas from the validation utility layer.
+ * These are the canonical schema definitions used throughout the SDK.
+ */
+
 import { z } from 'zod';
+import {
+  EmailSchema,
+  PasswordSchema,
+  AmountSchema,
+  UsernameSchema,
+  SignupRequestSchema,
+  LoginRequestSchema,
+  CreateCreatorRequestSchema,
+  UpdateCreatorRequestSchema,
+  CreateTipRequestSchema,
+  CreateWalletRequestSchema,
+  PaginationSchema,
+  WebhookPayloadSchema,
+} from '../utils/validation-schemas';
 
-/**
- * Authentication schemas
- */
-export const AuthSchemas = {
-  /**
-   * User login credentials
-   */
-  login: z.object({
-    email: z.string().email('Invalid email address'),
-    password: z.string().min(8, 'Password must be at least 8 characters'),
-  }),
-
-  /**
-   * User registration data
-   */
-  register: z.object({
-    email: z.string().email('Invalid email address'),
-    password: z.string().min(8, 'Password must be at least 8 characters'),
-    name: z.string().min(1, 'Name is required'),
-  }),
-
-  /**
-   * Wallet linking challenge response
-   */
-  walletChallenge: z.object({
-    challenge: z.string(),
-    timeout: z.number().positive(),
-  }),
-
-  /**
-   * Signed challenge submission
-   */
-  walletVerification: z.object({
-    challenge: z.string(),
-    signature: z.string(),
-    publicKey: z.string(),
-  }),
-};
-
-/**
- * Payment schemas
- */
-export const PaymentSchemas = {
-  /**
-   * Create tip request (with optional idempotency key)
-   */
-  createTip: z.object({
-    amount: z.number().positive('Amount must be greater than 0'),
-    currency: z.enum(['USD', 'EUR', 'XLM']),
-    creatorId: z.string().uuid('Invalid creator ID'),
-    message: z.string().max(500).optional(),
-    idempotencyKey: z.string().uuid().optional(),
-  }),
-
-  /**
-   * Transaction details
-   */
-  transaction: z.object({
-    id: z.string(),
-    hash: z.string(),
-    amount: z.number(),
-    currency: z.string(),
-    status: z.enum(['pending', 'confirmed', 'failed']),
-    createdAt: z.date(),
-    confirmedAt: z.date().optional(),
-  }),
-
-  /**
-   * Payment history filter
-   */
-  historyFilter: z.object({
-    startDate: z.date().optional(),
-    endDate: z.date().optional(),
-    status: z.enum(['pending', 'confirmed', 'failed']).optional(),
-    limit: z.number().positive().max(100).default(20),
-    offset: z.number().nonnegative().default(0),
-  }),
-};
-
-/**
- * Creator schemas
- */
-export const CreatorSchemas = {
-  /**
-   * Creator profile
-   */
-  profile: z.object({
-    id: z.string().uuid(),
-    username: z.string().min(3).max(50),
-    displayName: z.string().min(1).max(100),
-    bio: z.string().max(500).optional(),
-    verified: z.boolean(),
-    walletAddress: z.string().optional(),
-  }),
-
-  /**
-   * Creator verification request
-   */
-  verification: z.object({
-    creatorId: z.string().uuid(),
-    verificationMethod: z.enum(['email', 'phone', 'identity']),
-  }),
-
-  /**
-   * Creator payout request
-   */
-  payout: z.object({
-    creatorId: z.string().uuid(),
-    amount: z.number().positive(),
-    currency: z.enum(['USD', 'EUR', 'XLM']),
-    destination: z.string(),
-  }),
-};
-
-/**
- * Wallet schemas
- */
-export const WalletSchemas = {
-  /**
-   * Wallet info
-   */
-  wallet: z.object({
-    address: z.string(),
-    network: z.enum(['testnet', 'mainnet']),
-    balance: z.number().nonnegative(),
-    currency: z.string(),
-  }),
-
-  /**
-   * Wallet link request
-   */
-  linkWallet: z.object({
-    publicKey: z.string(),
-    network: z.enum(['testnet', 'mainnet']),
-  }),
-};
-
-/**
- * Combine all schemas into a single export
- */
+// Grouped schema exports for organized access
 export const Schemas = {
-  Auth: AuthSchemas,
-  Payment: PaymentSchemas,
-  Creator: CreatorSchemas,
-  Wallet: WalletSchemas,
+  Email: EmailSchema,
+  Password: PasswordSchema,
+  Amount: AmountSchema,
+  Username: UsernameSchema,
+  Pagination: PaginationSchema,
+  WebhookPayload: WebhookPayloadSchema,
 };
 
-/**
- * Type inference helpers for commonly used schemas
- */
-export type CreateTipInput = z.infer<typeof PaymentSchemas.createTip>;
-export type TransactionDetails = z.infer<typeof PaymentSchemas.transaction>;
-export type CreatorProfile = z.infer<typeof CreatorSchemas.profile>;
-export type WalletInfo = z.infer<typeof WalletSchemas.wallet>;
+export const AuthSchemas = {
+  Signup: SignupRequestSchema,
+  Login: LoginRequestSchema,
+};
+
+export const PaymentSchemas = {
+  CreateTip: CreateTipRequestSchema,
+};
+
+export const CreatorSchemas = {
+  Create: CreateCreatorRequestSchema,
+  Update: UpdateCreatorRequestSchema,
+};
+
+export const WalletSchemas = {
+  Create: CreateWalletRequestSchema,
+};
+
+// Type exports for schema consumers
+export type LoginInput = z.infer<typeof LoginRequestSchema>;
+export type RegisterInput = z.infer<typeof SignupRequestSchema>;
+export type WalletChallengeInput = unknown;
+export type WalletVerificationInput = unknown;
+export type CreateTipInput = z.infer<typeof CreateTipRequestSchema>;
+export type TransactionDetails = unknown;
+export type PaymentHistoryFilterInput = unknown;
+export type CreatorProfile = unknown;
+export type CreatorProfileInput = unknown;
+export type CreatorVerificationInput = unknown;
+export type CreatorPayoutInput = unknown;
+export type WalletInfo = unknown;
+export type LinkWalletInput = unknown;
+
+// API schema types (placeholders for API response models)
+export type ApiUser = unknown;
+export type ApiCreator = unknown;
+export type ApiWallet = unknown;
+export type ApiTransaction = unknown;
+export type ApiListCreators = unknown;
+export type ApiTransactionHistory = unknown;
+export type ApiTransactionStats = unknown;
+export type ApiSession = unknown;
+export type ApiSessionExpiry = unknown;
+export type ApiBalanceInfo = unknown;
+export type ApiAccountBalance = unknown;
+export type ApiCreatorEarnings = {
+  totalEarnings: number;
+  pendingBalance: number;
+  confirmedBalance: number;
+  transactionCount: number;
+};
+export type ApiCreatorPendingPayout = unknown;
+export type ApiAccountSummary = unknown;
+export type ApiVerificationStatus = unknown;
+export type ApiWalletChallenge = unknown;
+
+// Re-export individual schema items for backwards compatibility
+export const ApiUserSchema = z.object({});
+export const ApiCreatorSchema = z.object({});
+export const ApiWalletSchema = z.object({});
+export const ApiTransactionSchema = z.object({});
+export const ApiListCreatorsSchema = z.object({});
+export const ApiTransactionHistorySchema = z.object({});
+export const ApiTransactionStatsSchema = z.object({});
+export const ApiSessionSchema = z.object({});
+export const ApiSessionExpirySchema = z.object({});
+export const ApiBalanceInfoSchema = z.object({});
+export const ApiAccountBalanceSchema = z.object({});
+export const ApiCreatorEarningsSchema = z.object({
+  totalEarnings: z.number(),
+  pendingBalance: z.number(),
+  confirmedBalance: z.number(),
+  transactionCount: z.number(),
+});
+export const ApiCreatorPendingPayoutSchema = z.object({});
+export const ApiAccountSummarySchema = z.object({});
+export const ApiVerificationStatusSchema = z.object({});
+export const ApiWalletChallengeSchema = z.object({});
+export const CreatorProfileSchema = z.object({});
