@@ -6,15 +6,35 @@
  * request fingerprinting, custom headers, and sandbox/mock mode for offline testing.
  */
 
-import { ApiError, DorisioError, ErrorHandler, ErrorHandlerContext } from '../types';
+import { ApiError, DorisioError, ErrorHandler, ErrorHandlerContext, TimeoutError } from '../types';
+import type { CacheOptions } from '../types/cache';
+import type { QueueConfig, QueueStats, RequestPriority } from '../types/queue';
+import { CacheManager } from '../cache/cache-manager';
 import { InterceptorManager } from './interceptors';
-import { generateRequestId, isRequestIdempotent, RetryConflictError } from './retry-manager';
+import {
+  generateRequestId,
+  isRequestIdempotent,
+  RetryConflictError,
+  RetryManager,
+  waitForRetry,
+} from './retry-manager';
 import { CircuitBreaker, type CircuitBreakerConfig, CircuitOpenError } from './circuit-breaker';
+import { generateFingerprint, FingerprintCache } from './fingerprinter';
+import { parseCacheControl, ttlFromCacheControl } from './cache-control';
 import { MockRouter, type SandboxHistoryEntry } from '../sandbox/mock-router';
 import { RequestQueue } from './request-queue';
+import { PriorityRequestQueue } from '../queue/request-queue';
 import { OfflineQueue } from './offline-queue';
 import { ConnectionPool } from './connection-pool';
 import { JsonSerializer } from './serializer';
+import {
+  normalizeProxyConfig,
+  selectProxy,
+  isBypassed,
+  buildProxyHeaders,
+  type ProxyConfig,
+  type ProxyEntry,
+} from './proxy';
 import {
   MetricsCollector,
   type MetricsSummary,
@@ -31,11 +51,17 @@ import {
   isLargeResponse,
 } from './stream-handler';
 import { getTracingProvider, SpanStatus } from '../lib/telemetry';
-import { prepareRequestBody, type RequestCompressionConfig } from './compress';
+import { validateSchema } from '../validation/schema-validator';
+import type { ValidationSchemas } from '../types/validation';
+import { prepareRequestBody, decompressResponseBody, type RequestCompressionConfig } from './compress';
+import { createHttpError } from './error-factory';
+import { Http2PushManager, type Http2PushConfig } from './http2-push';
 
 export type HttpClientMode = 'live' | 'sandbox' | 'production';
 
 export interface RequestOptions {
+  /** Override the client's schemas for this request. */
+  schemas?: ValidationSchemas;
   method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   headers?: Record<string, string>;
   body?: Record<string, unknown>;
@@ -62,6 +88,11 @@ export interface RequestOptions {
    */
   requestId?: string;
   /**
+   * Distributed tracing id for this logical request. It is sent as
+   * `X-Correlation-ID` and is reused by retries and authentication replays.
+   */
+  correlationId?: string;
+  /**
    * Optional name of the calling SDK method for logging / diagnostics.
    */
   methodName?: string;
@@ -76,11 +107,24 @@ export interface RequestOptions {
    * Streaming options for chunk handling and progress tracking
    */
   streamOptions?: StreamOptions;
+  /**
+   * Relative priority for the priority request queue. Only meaningful when
+   * the queue is enabled; defaults to `'normal'`.
+   */
+  priority?: RequestPriority;
 }
 
 export interface HttpClientOptions {
+  /** Validate and transform request bodies and responses. */
+  schemas?: ValidationSchemas;
   timeout?: number;
   retryAttempts?: number;
+  /** Base delay in ms for exponential backoff retries (default 1000). */
+  retryBaseDelayMs?: number;
+  /** Maximum delay in ms cap for exponential backoff retries (default 30000). */
+  retryMaxDelayMs?: number;
+  /** Add 0–100 ms jitter to retry backoffs to avoid thundering herds (default false). */
+  retryJitter?: boolean;
   headers?: Record<string, string>;
   /**
    * `sandbox` bypasses fetch and returns deterministic mocks.
@@ -96,12 +140,20 @@ export interface HttpClientOptions {
   /** Reuse an in-flight or recently completed identical request. */
   deduplicateRequests?: boolean;
   deduplicationWindow?: number;
+  /** Request compression configuration. */
+  compress?: RequestCompressionConfig;
+  /** Called with every response received by the client. */
+  onResponse?: (response: Response) => void;
   /** Optional response cache configuration. */
   cache?: CacheOptions;
   /** Custom error handler for error recovery strategies */
   errorHandler?: ErrorHandler;
   /** Custom request ID generator function */
   requestIdGenerator?: () => string;
+  /** Enable correlation IDs, or provide a fixed ID to propagate to every request. */
+  correlationId?: boolean | string;
+  /** Called with the effective correlation ID once a response is received. */
+  onCorrelationId?: (correlationId: string) => void;
   /**
    * Enable request queue with concurrency control and automatic 429 backoff.
    */
@@ -140,18 +192,22 @@ export interface HttpClientOptions {
   proxy?: ProxyConfig;
   /** Circuit breaker configuration for failing endpoints */
   circuitBreaker?: CircuitBreakerConfig;
+  /**
+   * Priority request queue configuration. When `enabled` is true, requests
+   * are routed through a bounded concurrency queue that honours per-request
+   * `priority`. Takes precedence over the legacy `enableRequestQueue` flag.
+   */
+  queue?: QueueConfig;
+  /**
+   * HTTP/2 server push configuration. When enabled and HTTP/2 is available,
+   * pushed resources are cached and consumed on subsequent requests.
+   * HTTP/2 is never enforced; it is only used when available.
+   * Set to `false` to disable push support entirely.
+   */
+  http2Push?: Http2PushConfig | false;
 }
 
-export interface ProxyConfig {
-  /** Proxy URL (e.g. 'http://proxy:8080') */
-  url: string;
-  /** Proxy auth username */
-  username?: string;
-  /** Proxy auth password */
-  password?: string;
-  /** Whether to reject unauthorized SSL certificates */
-  rejectUnauthorized?: boolean;
-}
+export type { ProxyConfig, type ProxyEntry } from './proxy';
 
 function normalizeMode(mode?: HttpClientMode): 'live' | 'sandbox' {
   if (mode === 'sandbox') return 'sandbox';
@@ -186,6 +242,41 @@ function withRequestIdHeader(
   const next: Record<string, string> = { ...headers };
   if (!hasHeader(next, 'x-request-id')) {
     next['X-Request-Id'] = requestId;
+  }
+  return next;
+}
+
+/** Return a header value without requiring callers to match its casing. */
+function getHeader(headers: Record<string, string> | undefined, name: string): string | undefined {
+  const target = name.toLowerCase();
+  const entry = Object.entries(headers ?? {}).find(([key]) => key.toLowerCase() === target);
+  return entry?.[1];
+}
+
+/** Convert a fetch `Headers` object (or plain record) into a plain record. */
+function responseHeadersToRecord(headers: unknown): Record<string, string> {
+  const record: Record<string, string> = {};
+  if (!headers) return record;
+  if (typeof (headers as Headers).forEach === 'function') {
+    (headers as Headers).forEach((value, key) => {
+      record[key] = value;
+    });
+  } else if (typeof headers === 'object') {
+    for (const [key, value] of Object.entries(headers as Record<string, string>)) {
+      record[key] = String(value);
+    }
+  }
+  return record;
+}
+
+/** Attach the tracing id unless the caller explicitly supplied one. */
+function withCorrelationIdHeader(
+  headers: Record<string, string> | undefined,
+  correlationId: string | undefined
+): Record<string, string> {
+  const next: Record<string, string> = { ...headers };
+  if (correlationId && !hasHeader(next, 'x-correlation-id')) {
+    next['X-Correlation-ID'] = correlationId;
   }
   return next;
 }
@@ -237,10 +328,14 @@ type CachedRequest = {
 };
 
 export class HttpClient {
+  private readonly schemas?: ValidationSchemas;
   private baseUrl: string;
   private defaultHeaders: Record<string, string>;
   private timeout: number;
   private retryAttempts: number;
+  private retryBaseDelayMs: number;
+  private retryMaxDelayMs: number;
+  private retryJitter: boolean;
   private interceptors: InterceptorManager;
   private mode: 'live' | 'sandbox';
   private mockRouter: MockRouter;
@@ -255,10 +350,19 @@ export class HttpClient {
   private deduplicateRequests: boolean;
   private deduplicationWindow: number;
   private deduplicationCache = new Map<string, CachedRequest>();
+  private fingerprintCache: FingerprintCache;
+  private fingerprintWindow: number;
   private cacheManager: CacheManager;
+  /** Explicitly configured default TTL (ms), if any. Wins over response max-age. */
+  private cacheTtl: number | undefined;
   private errorHandler?: ErrorHandler;
   private requestIdGenerator?: () => string;
+  private correlationIdEnabled: boolean;
+  private configuredCorrelationId?: string;
+  private currentCorrelationId?: string;
+  private onCorrelationId?: (correlationId: string) => void;
   private requestQueue?: RequestQueue;
+  private priorityQueue?: PriorityRequestQueue;
   private offlineQueue?: OfflineQueue;
   private connectionPool: ConnectionPool;
   private serializer: JsonSerializer;
@@ -266,15 +370,21 @@ export class HttpClient {
   private throttleManager?: ThrottleManager;
   private hookManager?: HookManager;
   private proxy?: ProxyConfig;
+  private proxyIndex = 0;
   private onResponse?: (response: Response) => void;
   private compression?: RequestCompressionConfig;
   private streamHandler: StreamHandler;
   private circuitBreaker?: CircuitBreaker;
+  private http2PushManager?: Http2PushManager;
 
   constructor(baseUrl: string, options?: HttpClientOptions) {
+    this.schemas = options?.schemas;
     this.baseUrl = baseUrl.replace(/\/$/, '');
     this.timeout = options?.timeout || 30000;
     this.retryAttempts = options?.retryAttempts || 3;
+    this.retryBaseDelayMs = options?.retryBaseDelayMs ?? 1000;
+    this.retryMaxDelayMs = options?.retryMaxDelayMs ?? 30000;
+    this.retryJitter = options?.retryJitter ?? false;
     this.defaultHeaders = {
       'Content-Type': 'application/json',
       ...options?.headers,
@@ -288,15 +398,31 @@ export class HttpClient {
     });
     this.debug = options?.debug ?? false;
     this.logger = options?.logger ?? ((message, data) => console.debug(message, data));
-    this.deduplicateRequests = options?.deduplicateRequests ?? false;
+    this.deduplicateRequests = options?.deduplicateRequests ?? true;
     this.deduplicationWindow = options?.deduplicationWindow ?? 1000;
+    this.fingerprintWindow = options?.deduplicationWindow ?? 60000;
+    this.fingerprintCache = new FingerprintCache(this.fingerprintWindow);
     this.cacheManager = new CacheManager(options?.cache);
+    this.cacheTtl = options?.cache?.ttl;
     this.errorHandler = options?.errorHandler;
     this.requestIdGenerator = options?.requestIdGenerator;
+    this.correlationIdEnabled = options?.correlationId !== false;
+    this.configuredCorrelationId =
+      typeof options?.correlationId === 'string' ? options.correlationId : undefined;
+    this.currentCorrelationId = this.configuredCorrelationId;
+    this.onCorrelationId = options?.onCorrelationId;
 
     if (options?.enableRequestQueue) {
       this.requestQueue = new RequestQueue({
         maxConcurrentRequests: options.maxConcurrentRequests,
+      });
+    }
+
+    if (options?.queue?.enabled) {
+      this.priorityQueue = new PriorityRequestQueue({
+        maxConcurrent: options.queue.maxConcurrent,
+        prioritize: options.queue.prioritize,
+        maxQueueSize: options.queue.maxQueueSize,
       });
     }
 
@@ -330,9 +456,27 @@ export class HttpClient {
     this.compression = options?.compress;
     this.streamHandler = new StreamHandler();
 
+    if (options?.http2Push !== false) {
+      this.http2PushManager = new Http2PushManager(options?.http2Push);
+    }
+
     if (options?.circuitBreaker) {
       this.circuitBreaker = new CircuitBreaker(options.circuitBreaker);
     }
+  }
+
+  /**
+   * Compute the exponential backoff delay for a retry attempt.
+   *
+   * `delay = min(retryBaseDelayMs * 2 ^ attempt, retryMaxDelayMs)` with an
+   * optional additive 0–100 ms jitter to avoid synchronized retries.
+   */
+  private computeRetryDelay(attempt: number): number {
+    let delay = this.retryBaseDelayMs * Math.pow(2, attempt);
+    if (this.retryJitter) {
+      delay += Math.floor(Math.random() * 101);
+    }
+    return Math.max(0, Math.round(Math.min(delay, this.retryMaxDelayMs)));
   }
 
   /**
@@ -375,6 +519,31 @@ export class HttpClient {
     this.requestIdGenerator = generator;
   }
 
+  /** The latest client- or server-provided correlation ID. */
+  getCorrelationId(): string | undefined {
+    return this.currentCorrelationId;
+  }
+
+  private resolveCorrelationId(options: RequestOptions): string | undefined {
+    const headerCorrelationId = getHeader(options.headers, 'x-correlation-id');
+    const correlationId =
+      options.correlationId ??
+      headerCorrelationId ??
+      this.configuredCorrelationId ??
+      (this.correlationIdEnabled ? generateRequestId('correlation') : undefined);
+    this.currentCorrelationId = correlationId;
+    return correlationId;
+  }
+
+  private recordResponseCorrelationId(response: Response, requestCorrelationId?: string): void {
+    const serverCorrelationId = response.headers?.get?.('X-Correlation-ID') ?? undefined;
+    const correlationId = serverCorrelationId || requestCorrelationId;
+    if (correlationId) {
+      this.currentCorrelationId = correlationId;
+      this.onCorrelationId?.(correlationId);
+    }
+  }
+
   /**
    * Set default header
    */
@@ -398,6 +567,13 @@ export class HttpClient {
 
   getCacheManager(): CacheManager {
     return this.cacheManager;
+  }
+
+  /**
+   * Get the HTTP/2 push manager instance, if HTTP/2 push is enabled.
+   */
+  getHttp2PushManager(): Http2PushManager | undefined {
+    return this.http2PushManager;
   }
 
   /**
@@ -460,6 +636,7 @@ export class HttpClient {
     const requestId =
       options.requestId ??
       (this.requestIdGenerator ? this.requestIdGenerator() : generateRequestId('http'));
+    const correlationId = this.resolveCorrelationId(options);
 
     // One logical request may only run one retry sequence at a time. Two
     // concurrent callers reusing an id would otherwise double-submit the same
@@ -498,9 +675,32 @@ export class HttpClient {
         const seeded: RequestOptions = {
           ...options,
           requestId,
-          headers: withRequestIdHeader(options.headers, requestId),
+          correlationId,
+          headers: withCorrelationIdHeader(
+            withRequestIdHeader(options.headers, requestId),
+            correlationId
+          ),
         };
         const finalOptions = await this.interceptors.executeRequestInterceptors(seeded);
+        const requestHeaders = { ...this.defaultHeaders, ...finalOptions.headers };
+        const schemas = finalOptions.schemas ?? this.schemas;
+        if (
+          schemas?.request &&
+          (finalOptions.body !== undefined ||
+            finalOptions.method === 'POST' ||
+            finalOptions.method === 'PUT' ||
+            finalOptions.method === 'PATCH')
+        ) {
+          finalOptions.body = validateSchema(
+            schemas.request, finalOptions.body, 'request', requestId
+          ) as Record<string, unknown>;
+        }
+        const validateResponse = async (value: T): Promise<T> => {
+          const response = await this.interceptors.executeResponseInterceptors(value);
+          return schemas?.response
+            ? validateSchema(schemas.response, response, 'response', requestId) as T
+            : response as T;
+        };
 
         // Execute afterRequest hooks
         if (this.hookManager) {
@@ -510,74 +710,81 @@ export class HttpClient {
         const cacheMethod = finalOptions.methodName ?? finalOptions.method;
         const cacheBaseParams = finalOptions.cacheParams ?? [path, finalOptions.body ?? null];
         const cacheHeaders = Object.fromEntries(
-          Object.entries({ ...this.defaultHeaders, ...finalOptions.headers })
-            .filter(([header]) => header.toLowerCase() !== 'x-request-id')
+          Object.entries(requestHeaders)
+            .filter(([header]) => {
+              const normalizedHeader = header.toLowerCase();
+              return normalizedHeader !== 'x-request-id' && normalizedHeader !== 'x-correlation-id';
+            })
             .sort(([left], [right]) => left.localeCompare(right))
         );
         const cacheParams = [...cacheBaseParams, cacheHeaders];
         const key = `${finalOptions.method}:${path}:${stableSerialize(finalOptions.body ?? null)}:${stableSerialize(cacheHeaders)}`;
+        const fingerprint = generateFingerprint({ ...finalOptions, method: finalOptions.method, path });
         const isCacheable = finalOptions.method === 'GET' && this.cacheManager.isEnabled();
 
         if (isCacheable) {
           const cached = this.cacheManager.get<T>(cacheMethod, cacheParams);
           if (cached !== undefined) {
             cacheStatus = 'hit';
-            return (await this.interceptors.executeResponseInterceptors(
-              cloneCachedValue(cached)
-            )) as T;
+            return validateResponse(cloneCachedValue(cached));
           }
           cacheStatus = 'miss';
         }
 
-        const result = await this.executeDeduplication<T>(key, async () => {
+        const result = await this.executeDeduplication<T>(key, fingerprint, async () => {
           let response: T;
+          let responseHeaders: Record<string, string> = {};
           if (this.mode === 'sandbox') {
             const mocked = await this.mockRouter.handle(
               finalOptions.method,
               path,
               finalOptions.body
             );
-            return (await this.interceptors.executeResponseInterceptors(mocked)) as T;
-          }
-          try {
-            return await this.sendWithRetries<T>(path, finalOptions);
-          } catch (error) {
-            if (this.circuitBreaker && !(error instanceof CircuitOpenError)) {
-              if (error instanceof ApiError && error.statusCode !== undefined && error.statusCode < 500) {
-                this.circuitBreaker.recordSuccess(path);
-              } else {
-                this.circuitBreaker.recordFailure(path);
-              }
-            }
-            if (!this.canRecoverFrom(error, path, finalOptions)) throw error;
+            response = mocked as T;
+          } else {
             try {
-              response = await this.sendWithRetries<T>(path, finalOptions);
+              const fetched = await this.sendWithRetries<T>(path, finalOptions);
+              response = fetched.data;
+              responseHeaders = fetched.headers;
             } catch (error) {
+              if (this.circuitBreaker && !(error instanceof CircuitOpenError)) {
+                if (error instanceof ApiError && error.statusCode !== undefined && error.statusCode < 500) {
+                  this.circuitBreaker.recordSuccess(path);
+                } else {
+                  this.circuitBreaker.recordFailure(path);
+                }
+              }
               if (!this.canRecoverFrom(error, path, finalOptions)) throw error;
               try {
                 await this.refreshSessionOnce();
               } catch {
                 throw error;
               }
-              response = await this.sendWithRetries<T>(path, finalOptions);
+              const fetched = await this.sendWithRetries<T>(path, finalOptions);
+              response = fetched.data;
+              responseHeaders = fetched.headers;
             }
           }
 
           if (isCacheable) {
-            this.cacheManager.set(cacheMethod, cacheParams, cloneCachedValue(response));
+            const ttl = this.resolveResponseTtl(responseHeaders);
+            this.cacheManager.set(cacheMethod, cacheParams, cloneCachedValue(response), ttl);
           }
           return response;
         });
         if (this.circuitBreaker) {
           this.circuitBreaker.recordSuccess(path);
         }
-        return result;
+        return validateResponse(result);
       } finally {
         this.inFlightRequests.delete(requestId);
       }
     };
 
     const executeWithQueue = (): Promise<T> => {
+      if (this.priorityQueue) {
+        return this.priorityQueue.enqueue(executeInternal, options.priority ?? 'normal');
+      }
       if (this.requestQueue) {
         return this.requestQueue.enqueue(executeInternal);
       }
@@ -621,20 +828,31 @@ export class HttpClient {
     }
   }
 
-  private async executeDeduplication<T>(key: string, fn: () => Promise<T>): Promise<T> {
+  private async executeDeduplication<T>(key: string, fingerprint: string, fn: () => Promise<T>): Promise<T> {
     if (!this.deduplicateRequests) return fn();
+    const existing = this.deduplicationCache.get(key);
+    if (existing && existing.expiresAt > Date.now()) {
+      return existing.promise as Promise<T>;
+    }
+    const fingerprintEntry = this.fingerprintCache.get(fingerprint);
+    if (fingerprintEntry && fingerprintEntry.expiresAt > Date.now()) {
+      return fingerprintEntry.promise as Promise<T>;
+    }
     const promise = fn();
     const cachedRequest: CachedRequest = {
       promise,
       expiresAt: Date.now() + this.deduplicationWindow,
     };
     this.deduplicationCache.set(key, cachedRequest);
+    this.fingerprintCache.set(fingerprint, cachedRequest);
     promise.catch(() => {
       if (this.deduplicationCache.get(key) === cachedRequest) this.deduplicationCache.delete(key);
+      this.fingerprintCache.delete(fingerprint);
     });
     if (this.deduplicationWindow > 0) {
       setTimeout(() => {
         if (this.deduplicationCache.get(key) === cachedRequest) this.deduplicationCache.delete(key);
+        this.fingerprintCache.delete(fingerprint);
       }, this.deduplicationWindow);
     }
     return promise;
@@ -674,14 +892,32 @@ export class HttpClient {
   }
 
   /**
+   * Resolve the TTL (ms) to cache a response for, preferring an explicitly
+   * configured default, then the response's Cache-Control max-age.
+   */
+  private resolveResponseTtl(headers: Record<string, string>): number | undefined {
+    if (this.cacheTtl !== undefined) {
+      return this.cacheTtl;
+    }
+    const cacheControl = getHeader(headers, 'cache-control');
+    if (!cacheControl) {
+      return undefined;
+    }
+    return ttlFromCacheControl(parseCacheControl(cacheControl));
+  }
+
+  /**
    * Retry loop for a single attempt to reach the API.
    *
-   * Client errors are never retried. Server-side failures are retried only for
+   * Client errors other than 429 are never retried. Failures are retried only for
    * idempotent requests, so a POST that may already have been applied is not
    * replayed unless the caller opted in with `isIdempotent` or an
    * `Idempotency-Key` header.
    */
-  private async sendWithRetries<T>(path: string, options: RequestOptions): Promise<T> {
+  private async sendWithRetries<T>(path: string, options: RequestOptions): Promise<{
+    data: T;
+    headers: Record<string, string>;
+  }> {
     const url = `${this.baseUrl}${path}`;
     let headers = { ...this.defaultHeaders, ...options.headers };
     const serializedBody = options.body ? this.serializer.serialize(options.body) : undefined;
@@ -692,26 +928,47 @@ export class HttpClient {
       requestBody = preparedBody.body;
     }
 
+    // Consume HTTP/2 pushed resource if available, avoiding a network request
+    if (this.http2PushManager?.isEnabled()) {
+      const pushed = this.http2PushManager.consumePushedResource(url);
+      if (pushed !== undefined) {
+        return pushed as { data: T; headers: Record<string, string> };
+      }
+    }
+
+    if (this.compression?.enabled !== false && !hasHeader(headers, 'accept-encoding')) {
+      headers['Accept-Encoding'] = 'gzip, br';
+    }
+
     // Apply proxy configuration if set
     const fetchOptions: RequestInit = {
       method: options.method,
       headers,
       body: requestBody,
-      signal: options.signal
-        ? AbortSignal.any([options.signal, AbortSignal.timeout(options.timeout ?? this.timeout)])
-        : AbortSignal.timeout(options.timeout ?? this.timeout),
     };
 
+    // Select a proxy (round-robin) and apply bypass rules + proxy headers.
+    const proxyConfig = this.proxy;
+    const proxies = proxyConfig ? normalizeProxyConfig(proxyConfig) : [];
+    const bypassed = proxies.length > 0 && isBypassed(url, proxyConfig?.bypass);
+    let activeProxy: ProxyEntry | undefined;
+    if (!bypassed && proxies.length > 0) {
+      activeProxy = selectProxy(proxies, this.proxyIndex);
+      this.proxyIndex = (this.proxyIndex + 1) % proxies.length;
+      headers = { ...headers, ...buildProxyHeaders(activeProxy) };
+      fetchOptions.headers = headers;
+    }
+
     // If proxy is configured, try to use undici ProxyAgent (Node.js only)
-    if (this.proxy?.url && typeof globalThis.process !== 'undefined') {
+    if (activeProxy?.url && typeof globalThis.process !== 'undefined') {
       try {
         // Dynamic import to avoid bundling undici in browser builds
         const undici = await (Function('return import("undici")')() as Promise<
           typeof import('undici')
         >);
         (fetchOptions as Record<string, unknown>).dispatcher = new undici.ProxyAgent({
-          uri: this.proxy.url,
-          requestTls: { rejectUnauthorized: this.proxy.rejectUnauthorized ?? true },
+          uri: activeProxy.url,
+          requestTls: { rejectUnauthorized: activeProxy.rejectUnauthorized ?? true },
         });
       } catch {
         // undici not available, fall through to direct fetch
@@ -722,6 +979,11 @@ export class HttpClient {
     let interceptedError: unknown;
     let hasInterceptedError = false;
     const attempts = options.retries ?? this.retryAttempts;
+    const retryManager = new RetryManager({
+      initialDelayMs: this.retryBaseDelayMs,
+      maxDelayMs: this.retryMaxDelayMs,
+      jitter: this.retryJitter,
+    });
     const canRetry = isRequestIdempotent({
       method: options.method,
       isIdempotent: options.isIdempotent,
@@ -741,7 +1003,11 @@ export class HttpClient {
           attempt: attempt + 1,
           requestId: options.requestId,
         });
+        fetchOptions.signal = options.signal
+          ? AbortSignal.any([options.signal, AbortSignal.timeout(options.timeout ?? this.timeout)])
+          : AbortSignal.timeout(options.timeout ?? this.timeout);
         const response = await fetch(url, fetchOptions);
+        this.recordResponseCorrelationId(response, options.correlationId);
         options.onResponse?.(response);
         this.onResponse?.(response);
         this.log('[DORISIO] response', {
@@ -756,12 +1022,13 @@ export class HttpClient {
         if (!response.ok) {
           let error: Record<string, unknown> = {};
           try {
-            const errorText = await response.text();
+            const buffer = await response.arrayBuffer();
+            const encoding = response.headers.get('content-encoding') ?? '';
+            const errorText = await decompressResponseBody(buffer, encoding);
             error = errorText
               ? this.serializer.deserialize<Record<string, unknown>>(errorText)
               : {};
           } catch {
-            // Fallback for mocks that only implement json()
             try {
               error =
                 (await (response as { json?: () => Promise<Record<string, unknown>> }).json?.()) ??
@@ -770,39 +1037,39 @@ export class HttpClient {
               // ignore
             }
           }
-          const retryAfterHeader = response.headers?.get?.('Retry-After');
-          let retryAfter: number | undefined;
-          if (retryAfterHeader) {
-            const parsedSeconds = Number(retryAfterHeader);
-            if (!Number.isNaN(parsedSeconds)) {
-              retryAfter = parsedSeconds;
-            } else {
-              const parsedDate = Date.parse(retryAfterHeader);
-              if (!Number.isNaN(parsedDate)) {
-                retryAfter = Math.max(0, Math.ceil((parsedDate - Date.now()) / 1000));
-              }
-            }
-          }
-          throw new ApiError(
-            String(error.error) || 'Request failed',
-            response.status,
-            error.code,
-            retryAfter,
-            options.requestId
-          );
+          throw createHttpError({
+            status: response.status,
+            body: error,
+            requestId: options.requestId,
+            headers: response.headers,
+          });
         }
 
         let data: T;
         try {
-          const text = await response.text();
+          const buffer = await response.arrayBuffer();
+          const encoding = response.headers.get('content-encoding') ?? '';
+          const text = await decompressResponseBody(buffer, encoding);
           data = this.serializer.deserialize<T>(text);
         } catch {
-          // Fallback for mocks that only implement json()
-          data = (await (response as { json?: () => Promise<T> }).json?.()) ?? (undefined as T);
+          // Fallback for mocks that only implement json() / text()
+          const fallback = response as {
+            json?: () => Promise<T>;
+            text?: () => Promise<string>;
+          };
+          if (fallback.json) {
+            data = await fallback.json();
+          } else if (fallback.text) {
+            data = this.serializer.deserialize<T>(await fallback.text());
+          } else {
+            data = undefined as T;
+          }
         }
 
-        return data;
+        return { data, headers: responseHeadersToRecord(response.headers) };
       } catch (error) {
+        release?.();
+        release = undefined;
         lastError = error instanceof Error ? error : new Error(String(error));
         if (lastError instanceof DorisioError && !lastError.requestId && options.requestId) {
           lastError.requestId = options.requestId;
@@ -820,6 +1087,11 @@ export class HttpClient {
           throw interceptedError;
         }
 
+        const retryDelay =
+          lastError instanceof DorisioError && lastError.statusCode === 429
+            ? retryManager.calculateDelay(attempt, lastError)
+            : this.computeRetryDelay(attempt);
+
         // Call custom error handler if registered
         if (this.errorHandler && lastError instanceof DorisioError) {
           const context: ErrorHandlerContext = {
@@ -831,30 +1103,48 @@ export class HttpClient {
             requestId: options.requestId,
           };
 
+          let action;
           try {
-            const action = await this.errorHandler(lastError, context);
+            action = await this.errorHandler(lastError, context);
 
             if (action.action === 'retry') {
-              const delay = action.delayMs ?? Math.pow(2, attempt) * 1000;
+              const delay = action.delayMs ?? this.computeRetryDelay(attempt);
               if (attempt < attempts - 1) {
                 await new Promise((resolve) => setTimeout(resolve, delay));
                 continue;
               }
             } else if (action.action === 'fallback') {
-              return action.fallbackValue as T;
+              return {
+                data: action.fallbackValue as T,
+                headers: {},
+              };
             }
             // action === 'throw' falls through to throw error
           } catch (handlerError) {
             // If error handler itself fails, log and continue with normal error handling
             this.logger('[DORISIO] error handler failed', { error: handlerError });
           }
+          if (action?.action === 'retry') {
+            if (attempt < attempts - 1) {
+              await waitForRetry(action.delayMs ?? retryDelay, options.signal);
+              continue;
+            }
+          } else if (action?.action === 'fallback') {
+            return {
+              data: action.fallbackValue as T,
+              headers: {},
+            };
+          } else if (action?.action === 'throw' && lastError.statusCode === 429) {
+            throw interceptedError;
+          }
         }
 
         if (
-          error instanceof ApiError &&
+          error instanceof DorisioError &&
           error.statusCode !== undefined &&
           error.statusCode >= 400 &&
-          error.statusCode < 500
+          error.statusCode < 500 &&
+          error.statusCode !== 429
         ) {
           throw interceptedError;
         }
@@ -865,7 +1155,7 @@ export class HttpClient {
         }
 
         if (attempt < attempts - 1) {
-          await new Promise((resolve) => setTimeout(resolve, Math.pow(2, attempt) * 1000));
+          await waitForRetry(retryDelay, options.signal);
         }
       } finally {
         release?.();
@@ -904,6 +1194,20 @@ export class HttpClient {
    */
   getRequestQueue(): RequestQueue | undefined {
     return this.requestQueue;
+  }
+
+  /**
+   * Get the priority request queue instance if enabled
+   */
+  getPriorityQueue(): PriorityRequestQueue | undefined {
+    return this.priorityQueue;
+  }
+
+  /**
+   * Get a snapshot of priority request queue statistics
+   */
+  getQueueStats(): QueueStats | undefined {
+    return this.priorityQueue?.getStats();
   }
 
   /**
@@ -972,6 +1276,213 @@ export class HttpClient {
   }
 
   /**
+   * Make a streaming HTTP request and return the body as a `ReadableStream`
+   * of decoded text chunks (Issue #120).
+   *
+   * The response is **never buffered**: each network chunk is decoded with a
+   * streaming `TextDecoder` (multi-byte characters spanning chunks are
+   * stitched) and enqueued on the returned stream. Reading pauses and
+   * resumes with the consumer — a slow reader naturally applies
+   * backpressure — so memory stays O(chunkSize) regardless of export size.
+   *
+   * Works in Node.js >= 18 and modern browsers (global `ReadableStream`).
+   *
+   * @param path - Request path (query string included)
+   * @param options - Streaming request options
+   * @returns The stream plus transfer metadata and an abort handle
+   */
+  async requestTextStream(
+    path: string,
+    options: StreamRequestOptions = {}
+  ): Promise<StreamedResponse> {
+    const startTime = Date.now();
+    const requestId =
+      options.requestId ??
+      (this.requestIdGenerator ? this.requestIdGenerator() : generateRequestId('stream'));
+    const controller = new AbortController();
+
+    // Streaming transfer state, shared by the fetch phase and the body-read
+    // phase that follows it.
+    let aborted = false;
+    let upstreamReader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+    let activeController: ReadableStreamDefaultController<string> | undefined;
+
+    const abortError = () => {
+      const error = new Error('Streaming request aborted');
+      error.name = 'AbortError';
+      return error;
+    };
+
+    // Error the consumer-facing controller directly so caller aborts and
+    // mid-stream failures reject pending reads rather than quietly closing.
+    const fail = (error: unknown) => {
+      if (!activeController) return;
+      try {
+        activeController.error(error);
+      } catch {
+        // already closed or errored — nothing left to do
+      }
+    };
+
+    const onExternalAbort = () => {
+      aborted = true;
+      controller.abort();
+      fail(abortError());
+      void upstreamReader?.cancel().catch(() => undefined);
+    };
+    options.signal?.addEventListener('abort', onExternalAbort, { once: true });
+
+    const headers = withRequestIdHeader(
+      withCorrelationIdHeader({ ...this.defaultHeaders, ...options.headers }, undefined),
+      requestId
+    );
+
+    const timeoutMs = options.timeout ?? this.timeout;
+    const signal = controller.signal;
+
+    // The timeout only covers time-to-headers. Once a response exists the
+    // transfer is governed by the consumer and by the abort signal — keeping a
+    // timer armed for the whole transfer would kill legitimate long exports.
+    let timedOut = false;
+    const timeoutHandle = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, timeoutMs);
+
+    let response: Response;
+    try {
+      response = await fetch(`${this.baseUrl}${path}`, {
+        method: 'GET',
+        headers,
+        signal,
+      });
+    } catch (error) {
+      clearTimeout(timeoutHandle);
+      options.signal?.removeEventListener('abort', onExternalAbort);
+      if (timedOut) {
+        throw new TimeoutError(`Streaming request timed out after ${timeoutMs}ms`);
+      }
+      throw error;
+    }
+    clearTimeout(timeoutHandle);
+
+    this.onResponse?.(response);
+    this.log('[DORISIO] stream response', {
+      method: 'GET',
+      path,
+      status: response.status,
+      requestId,
+    });
+
+    if (!response.ok) {
+      options.signal?.removeEventListener('abort', onExternalAbort);
+      let error: Record<string, unknown> = {};
+      try {
+        const text = await response.text();
+        error = text ? this.serializer.deserialize<Record<string, unknown>>(text) : {};
+      } catch {
+        // ignore body parse failures — status is the primary signal
+      }
+      throw createHttpError({
+        status: response.status,
+        body: error,
+        requestId,
+        headers: response.headers,
+      });
+    }
+
+    const body = response.body;
+    if (!body) {
+      options.signal?.removeEventListener('abort', onExternalAbort);
+      throw new ApiError('Streaming is not supported by this runtime', 502, undefined, undefined, requestId);
+    }
+
+    const contentLength = response.headers?.get?.('content-length');
+    const totalBytes = contentLength ? parseInt(contentLength, 10) : undefined;
+    const decoder = new TextDecoder();
+    const highWaterMark = Math.max(1, options.highWaterMark ?? 4);
+
+    let bytesReceived = 0;
+    let chunksDelivered = 0;
+
+    const detach = () => options.signal?.removeEventListener('abort', onExternalAbort);
+
+    const stream = new ReadableStream<string>(
+      {
+        // Pull-driven: the body is read one chunk at a time, and only while
+        // the consumer is asking for data, up to `highWaterMark` chunks ahead.
+        // That is what keeps memory constant for arbitrarily large exports and
+        // lets a slow consumer throttle the transfer instead of buffering it.
+        async pull(controller) {
+          activeController = controller;
+          try {
+            if (aborted) throw abortError();
+            upstreamReader ??= body.getReader();
+            const result = await upstreamReader.read();
+            const chunk = result.value;
+            if (aborted) throw abortError();
+
+            if (result.done || !chunk) {
+              const tail = decoder.decode();
+              if (tail) controller.enqueue(tail);
+              detach();
+              controller.close();
+              return;
+            }
+
+            bytesReceived += chunk.byteLength;
+            chunksDelivered += 1;
+
+            if (options.onProgress) {
+              options.onProgress({
+                bytesReceived,
+                totalBytes,
+                chunkSize: chunk.byteLength,
+                percentComplete:
+                  totalBytes && totalBytes > 0
+                    ? Math.min(100, (bytesReceived / totalBytes) * 100)
+                    : undefined,
+              });
+            }
+
+            // `stream: true` holds an incomplete multi-byte sequence back until
+            // the bytes that finish it arrive in a following chunk.
+            const text = decoder.decode(chunk, { stream: true });
+            if (text) controller.enqueue(text);
+          } catch (error) {
+            detach();
+            // Rejecting pull() errors the readable stream, so a mid-stream
+            // network failure surfaces on the consumer's pending read().
+            throw error;
+          }
+        },
+        async cancel(reason) {
+          detach();
+          aborted = true;
+          await upstreamReader?.cancel(reason);
+        },
+      },
+      { highWaterMark }
+    );
+
+    return {
+      stream,
+      stats: {
+        get totalBytes() {
+          return bytesReceived;
+        },
+        get chunks() {
+          return chunksDelivered;
+        },
+        get durationMs() {
+          return Date.now() - startTime;
+        },
+      },
+      abort: onExternalAbort,
+    };
+  }
+
+  /**
    * Make a streaming HTTP request
    *
    * Processes large responses in chunks to reduce memory usage.
@@ -995,10 +1506,7 @@ export class HttpClient {
     try {
       // Build full URL
       const url = `${this.baseUrl}${path}`;
-      const headers = {
-        ...this.defaultHeaders,
-        ...options.headers,
-      };
+      const headers = { ...this.defaultHeaders, ...options.headers };
 
       // Make the actual fetch request
       const response = await fetch(url, {
@@ -1010,11 +1518,12 @@ export class HttpClient {
 
       // Check if response is ok
       if (!response.ok) {
-        throw new ApiError(
-          `HTTP ${response.status}: ${response.statusText}`,
-          response.status,
-          await response.text()
-        );
+        throw createHttpError({
+          status: response.status,
+          body: await response.text(),
+          requestId: options.requestId,
+          headers: response.headers,
+        });
       }
 
       // Determine if we should use streaming based on response size

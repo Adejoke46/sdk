@@ -1,5 +1,6 @@
 import { BatchProcessor } from '../http/batch-processor';
 
+
 export type BatchOperationResult<T> =
   | { status: 'fulfilled'; value: T }
   | { status: 'rejected'; reason: Error };
@@ -17,13 +18,13 @@ export class Batcher<T = unknown> {
   private readonly operations: Array<() => Promise<T>> = [];
 
   add<Result extends T>(operation: () => Promise<Result>): this {
-    this.operations.push(operation);
+    this.operations.push(operation as () => Promise<T>);
     return this;
   }
 
   async execute(options: BatchExecuteOptions = {}): Promise<BatchOperationResult<T>[]> {
     const { onProgress, ...processorOptions } = options;
-    const processor = new BatchProcessor<() => Promise<T>, T>({
+    const processor = new BatchProcessor<() => Promise<T>, T>({ // eslint-disable-line @typescript-eslint/no-explicit-any
       ...processorOptions,
       onProgress: ({ completed, total }) => onProgress?.(completed, total),
     });

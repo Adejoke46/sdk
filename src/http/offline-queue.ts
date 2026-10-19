@@ -8,6 +8,7 @@
  */
 
 import { NetworkError } from '../types/errors';
+import { isNetworkError } from '../lib/errors/type-guards';
 
 export type OfflineEventType = 'online' | 'offline' | 'queue-processed';
 
@@ -200,7 +201,7 @@ export class OfflineQueue {
           item.resolve(result);
         } catch (error) {
           // If the device went back offline during replay, pause queue
-          if (!this.online || (error instanceof NetworkError && !this.online)) {
+          if (!this.online || (isNetworkError(error) && !this.online)) {
             break;
           }
 

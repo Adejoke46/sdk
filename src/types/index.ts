@@ -42,6 +42,7 @@ export type {
 export type { TipRequest, CreateTipRequest } from './requests';
 export type { CacheOptions, CacheStats, CacheStrategy } from './cache';
 export type { ApiResponse, PaginationMeta, PaginatedResponse } from './api';
+export type { QueueConfig, QueueStats, RequestPriority } from './queue';
 export {
   DorisioError,
   AuthError,
@@ -49,20 +50,35 @@ export {
   PaymentError,
   ValidationError,
   RateLimitError,
-  TimeoutError,
-  ApiError,
-  AuthenticationError,
-  AuthorizationError,
-  NotFoundError,
-  NetworkError,
+  QueueFullError,
 } from './errors';
+export type {
+  DorisioErrorOptions,
+  AuthErrorOptions,
+  WalletVerificationErrorOptions,
+  PaymentErrorOptions,
+  ValidationErrorOptions,
+  RateLimitErrorOptions,
+  QueueFullErrorOptions,
+} from './errors';
+export {
+  createError,
+  createAuthError,
+  createWalletVerificationError,
+  createPaymentError,
+  createValidationError,
+  createRateLimitError,
+  createQueueFullError,
+} from '../http/error-factory';
 export type {
   ErrorHandler,
   ErrorHandlerAction,
   ErrorHandlerContext,
+  RateLimitMetadata,
   Middleware,
   MiddlewareContext,
 } from './errors';
+export { ApiError } from './errors';
 
 export type {
   BatchResult,

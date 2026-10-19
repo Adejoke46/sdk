@@ -1,6 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
 import { DorisioClient } from './client';
-import { RequestSigner } from './http/request-signer';
 import crypto from 'crypto';
 
 describe('DorisioClient Request Signing', () => {
@@ -30,7 +29,7 @@ describe('DorisioClient Request Signing', () => {
     const headers = init.headers as Record<string, string>;
     expect(headers['X-Signature']).toBeDefined();
     expect(headers['X-Timestamp']).toBeDefined();
-    expect(headers['X-Signature'].length).toBe(64);
+    expect(headers['X-Signature']?.length).toBe(64);
 
     const canonicalString = `GET\n/creators/creator-1\n${headers['X-Timestamp']}\n`;
     const expectedSig = crypto

@@ -326,6 +326,39 @@ const creator = await client.getCreator('creator-123', {
 });
 ```
 
+### Request Queueing & Prioritization
+
+Bound how many requests run at once and make sure important calls are served first. When the concurrency limit is reached, further requests wait in a priority queue; higher priority requests are dequeued before lower priority ones, with FIFO ordering within each level.
+
+```typescript
+const client = new DorisioClient({
+  baseUrl: 'https://api.dorisio.com',
+  token: 'my-token',
+  queue: {
+    enabled: true,
+    maxConcurrent: 3, // at most 3 requests in flight
+    prioritize: true, // high > normal > low
+    maxQueueSize: 1000, // backpressure: reject beyond this depth
+  },
+});
+
+// Per-request priority (defaults to 'normal')
+const tip = await client.createTip(data, { priority: 'high' });
+const history = await client.getTransactionHistory({ page: 1 }, { priority: 'low' });
+
+// Inspect queue statistics
+const stats = client.getQueueStats();
+// { queueDepth, inFlight, processed, rejected, totalWaitTime, maxWaitTime, averageWaitTime }
+```
+
+Semantics:
+
+- **Ordering**: `high` > `normal` > `low`; requests of equal priority run in FIFO order.
+- **Concurrency**: at most `maxConcurrent` requests are in flight at any time.
+- **Backpressure**: the waiting queue is bounded by `maxQueueSize` (default `1000`). When full, new requests reject with `QueueFullError` instead of growing memory without bound.
+- **`prioritize: false`**: plain FIFO across all priorities (still respecting `maxConcurrent`).
+- **`enabled: false`** (default): requests pass through with no queueing overhead.
+
 ### Batch Operations & Partial Failure Handling
 
 Perform bulk operations with concurrency limits, exponential backoff retries, and detailed breakdown of successful and failed items:
@@ -448,6 +481,44 @@ transactions.forEach((tx) => {
 ```
 
 ## Configuration
+
+### Request and response schemas
+
+Pass Zod or Joi schemas to validate each request body before it is sent and each
+decoded response before it is returned. The schema's parsed value is used, so
+coercion and other transformations reach the API and the caller. Joi is optional;
+install it in your application if you use Joi schemas.
+
+```typescript
+import { z } from 'zod';
+import { DorisioClient, SchemaValidationError } from 'dorisio-sdk';
+
+const client = new DorisioClient({
+  baseUrl: 'https://api.dorisio.com',
+  schemas: {
+    request: z.object({ amount: z.coerce.number().positive() }),
+    response: z.object({ success: z.boolean(), data: z.unknown() }),
+  },
+});
+
+try {
+  const result = await client.getHttpClient().request('/tips', {
+    method: 'POST',
+    body: { amount: '10' },
+  });
+  console.log(result);
+} catch (error) {
+  if (error instanceof SchemaValidationError) {
+    console.error(error.phase, error.issues); // e.g. [{ path: 'amount', message: '...' }]
+  }
+}
+```
+
+You can also pass `schemas` in an individual `HttpClient.request` call to
+override the client defaults. Request validation applies to bodies, including
+missing bodies on POST, PUT, and PATCH. GET and DELETE calls without bodies
+skip request validation; response validation still runs. With no schemas,
+requests use the existing path without parsing or conversion.
 
 ```typescript
 const client = new DorisioClient({
@@ -618,6 +689,21 @@ See **[docs/ERROR_HANDLING.md](./docs/ERROR_HANDLING.md)** for the full guide, i
 | `TimeoutError` | 408 | `TIMEOUT` | — |
 | `NetworkError` | 0 | `NETWORK_ERROR` | — |
 | `NotFoundError` | 404 | `NOT_FOUND` | — |
+
+### Rate-limit retries
+
+For idempotent requests, HTTP 429 responses retry within the configured attempt budget.
+`Retry-After` accepts delta-seconds or an HTTP date and controls the wait without jitter.
+`X-RateLimit-Reset` accepts a Unix timestamp in seconds or an HTTP date as a fallback.
+`RateLimitError.retryAfter` exposes the wait in seconds. `RateLimitError.rateLimit` stores the parsed
+`limit`, `remaining`, and `reset` values. `reset` is a Unix timestamp in seconds.
+
+Without a valid server delay, 429 retries use the configured exponential backoff,
+capped at 30 seconds by default. `HttpClient` uses `retryBaseDelayMs`, `retryMaxDelayMs`,
+and `retryJitter`. Jitter adds 0 to 100 milliseconds and is disabled by default for
+`HttpClient` and enabled by default for `RetryManager`.
+Server delays can exceed that cap. Explicit error-handler delays, throw decisions,
+and fallback values take precedence.
 
 ### Error recovery examples
 

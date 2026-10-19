@@ -11,6 +11,7 @@ import {
   Paginator,
   type PageItem,
   type PaginationResult,
+  type QueryOptions,
 } from './query-builder';
 import type { Tip } from '../types';
 
@@ -33,7 +34,6 @@ function cursorClient(pages: number[][]) {
   const request = vi.fn(async (_method: string, path: string) => {
     const cursor = new URLSearchParams(path.split('?')[1] ?? '').get('cursor');
     const idx = cursor ? Number(cursor.slice(1)) : 0;
-    const pageItems = pages[idx] ?? [];
     return {
       success: true,
       data: {
@@ -163,7 +163,7 @@ describe('prefetch', () => {
 describe('Paginator (offset backend)', () => {
   const make = (total = 25) => {
     const client = offsetClient(total);
-    return { client, pager: createPaginator<Tip>((o) => listTips(client, o), { limit: 10 }) };
+    return { client, pager: createPaginator<Tip>((o: QueryOptions) => listTips(client, o), { limit: 10 }) };
   };
 
   it('walks forward, stops at the end, and prev() returns the page you came from', async () => {
@@ -214,7 +214,7 @@ describe('Paginator (offset backend)', () => {
     const base = offsetClient(25);
     let fail = false;
     const pager = createPaginator<Tip>(
-      (o) => (fail ? Promise.reject(new Error('down')) : listTips(base, o)),
+      (o: QueryOptions) => (fail ? Promise.reject(new Error('down')) : listTips(base, o)),
       { limit: 10 }
     );
     await pager.next();
@@ -226,7 +226,7 @@ describe('Paginator (offset backend)', () => {
 
   it('can start from a supplied cursor', async () => {
     const client = offsetClient(50);
-    const pager = new Paginator<Tip>((o) => listTips(client, o), {
+    const pager = new Paginator<Tip>((o: QueryOptions) => listTips(client, o), {
       limit: 10,
       cursor: encodeCursor(20),
     });
@@ -237,7 +237,7 @@ describe('Paginator (offset backend)', () => {
 describe('Paginator (cursor-only backend)', () => {
   it('follows opaque cursors forward and back', async () => {
     const client = cursorClient([[1, 2], [3, 4], [5]]);
-    const pager = createPaginator<Tip>((o) => listTips(client, o), { limit: 2 });
+    const pager = createPaginator<Tip>((o: QueryOptions) => listTips(client, o), { limit: 2 });
     expect(ids(await pager.next())).toEqual([1, 2]);
     expect(ids(await pager.next())).toEqual([3, 4]);
     expect(ids(await pager.next())).toEqual([5]);
@@ -249,12 +249,12 @@ describe('Paginator (cursor-only backend)', () => {
 
 describe('type inference', () => {
   it('Paginator knows its item shape', () => {
-    const pager = createPaginator<Tip>((o) => listTips({ request: async () => ({}) }, o));
+    const pager = createPaginator<Tip>((o: QueryOptions) => listTips({ request: async () => ({}) }, o));
     expectTypeOf(pager).toEqualTypeOf<Paginator<Tip>>();
     expectTypeOf<PageItem<typeof pager>>().toEqualTypeOf<Tip>();
     expectTypeOf<PageItem<ReturnType<typeof listTips<Tip>>>>().toEqualTypeOf<Tip>();
     // inferred from the fetcher, no explicit generic needed
-    const inferred = createPaginator((o) => listTips({ request: async () => ({}) }, o));
+    const inferred = createPaginator((o: QueryOptions) => listTips({ request: async () => ({}) }, o));
     expectTypeOf<PageItem<typeof inferred>>().toEqualTypeOf<Tip>();
   });
 });
