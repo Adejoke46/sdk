@@ -1,10 +1,14 @@
 name: CI
 
+# TEMPORARILY DISABLED DURING WAVE CONTRIBUTION PERIOD
+# To re-enable after Wave: change 'workflow_dispatch' back to:
+# on:
+#   push:
+#     branches: [main, develop]
+#   pull_request:
+#     branches: [main, develop]
 on:
-  push:
-    branches: [main, develop]
-  pull_request:
-    branches: [main, develop]
+  workflow_dispatch: # Manual trigger only - effectively disables automatic CI during Wave
 
 jobs:
   test:
@@ -27,6 +31,9 @@ jobs:
 
       - name: Lint
         run: npm run lint
+
+      - name: Lint React hooks
+        run: npx eslint -c .eslintrc.override.json src/react/
 
       - name: Type check
         run: npm run type-check

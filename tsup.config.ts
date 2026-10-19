@@ -6,17 +6,13 @@ export default defineConfig([
       index: 'src/index.ts',
       'react/index': 'src/react/index.ts',
       webhook: 'src/webhook.ts',
+      'offline/sqlite': 'src/offline/sqlite.ts',
     },
     format: ['esm', 'cjs'],
-    dts: {
-      resolve: true,
-      compilerOptions: {
-        skipLibCheck: true,
-        noImplicitAny: false,
-      },
-    },
+    dts: false,
     sourcemap: true,
     clean: true,
+    external: ['better-sqlite3'],
   },
   {
     entry: {
@@ -30,5 +26,6 @@ export default defineConfig([
       js: '#!/usr/bin/env node',
     },
     shims: true,
+    external: ['better-sqlite3'],
   },
 ]);

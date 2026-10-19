@@ -115,7 +115,7 @@ abstract class BaseStorage implements IStorageBackend {
 
 /**
  * In-Memory Storage Backend
- * 
+ *
  * Stores operations in memory. Data is lost when the process exits.
  * Useful for testing or temporary offline support.
  */
@@ -130,7 +130,7 @@ export class MemoryStorage extends BaseStorage {
 
   async saveOperation(operation: QueuedOperation): Promise<void> {
     this.ensureInitialized();
-    
+
     // Enforce max operations limit
     if (
       this.options.maxOperations &&
@@ -218,7 +218,7 @@ export class MemoryStorage extends BaseStorage {
 
 /**
  * IndexedDB Storage Backend
- * 
+ *
  * Stores operations in browser IndexedDB for persistent offline storage.
  * Available in browser environments.
  */
@@ -250,7 +250,7 @@ export class IndexedDBStorage extends BaseStorage {
         // Create object store if it doesn't exist
         if (!db.objectStoreNames.contains(this.storeName)) {
           const store = db.createObjectStore(this.storeName, { keyPath: 'id' });
-          
+
           // Create indexes for efficient querying
           store.createIndex('status', 'status', { unique: false });
           store.createIndex('type', 'type', { unique: false });
@@ -266,10 +266,7 @@ export class IndexedDBStorage extends BaseStorage {
 
     // Check and enforce max operations limit
     const count = await this.getCount();
-    if (
-      this.options.maxOperations &&
-      count >= this.options.maxOperations
-    ) {
+    if (this.options.maxOperations && count >= this.options.maxOperations) {
       // Remove oldest operation
       const oldest = await this.findOldestOperation();
       if (oldest) {
@@ -289,7 +286,8 @@ export class IndexedDBStorage extends BaseStorage {
       const request = store.put(operation);
 
       request.onsuccess = () => resolve();
-      request.onerror = () => reject(new Error(`Failed to save operation: ${request.error?.message}`));
+      request.onerror = () =>
+        reject(new Error(`Failed to save operation: ${request.error?.message}`));
     });
   }
 
@@ -310,7 +308,8 @@ export class IndexedDBStorage extends BaseStorage {
       request.onsuccess = () => {
         resolve(request.result || null);
       };
-      request.onerror = () => reject(new Error(`Failed to get operation: ${request.error?.message}`));
+      request.onerror = () =>
+        reject(new Error(`Failed to get operation: ${request.error?.message}`));
     });
   }
 
@@ -332,7 +331,8 @@ export class IndexedDBStorage extends BaseStorage {
         const operations = request.result as QueuedOperation[];
         resolve(this.filterOperations(operations, filter));
       };
-      request.onerror = () => reject(new Error(`Failed to get operations: ${request.error?.message}`));
+      request.onerror = () =>
+        reject(new Error(`Failed to get operations: ${request.error?.message}`));
     });
   }
 
@@ -363,7 +363,8 @@ export class IndexedDBStorage extends BaseStorage {
       const request = store.delete(id);
 
       request.onsuccess = () => resolve();
-      request.onerror = () => reject(new Error(`Failed to delete operation: ${request.error?.message}`));
+      request.onerror = () =>
+        reject(new Error(`Failed to delete operation: ${request.error?.message}`));
     });
   }
 
@@ -385,14 +386,14 @@ export class IndexedDBStorage extends BaseStorage {
 
       for (const id of ids) {
         const request = store.delete(id);
-        
+
         request.onsuccess = () => {
           completed++;
           if (completed === ids.length && !hasError) {
             resolve();
           }
         };
-        
+
         request.onerror = () => {
           hasError = true;
           reject(new Error(`Failed to delete operation ${id}: ${request.error?.message}`));
@@ -414,7 +415,8 @@ export class IndexedDBStorage extends BaseStorage {
       const request = store.clear();
 
       request.onsuccess = () => resolve();
-      request.onerror = () => reject(new Error(`Failed to clear operations: ${request.error?.message}`));
+      request.onerror = () =>
+        reject(new Error(`Failed to clear operations: ${request.error?.message}`));
     });
   }
 
@@ -428,7 +430,8 @@ export class IndexedDBStorage extends BaseStorage {
         const request = store.count();
 
         request.onsuccess = () => resolve(request.result);
-        request.onerror = () => reject(new Error(`Failed to count operations: ${request.error?.message}`));
+        request.onerror = () =>
+          reject(new Error(`Failed to count operations: ${request.error?.message}`));
       });
     }
 
@@ -462,7 +465,7 @@ export class IndexedDBStorage extends BaseStorage {
 
 /**
  * SQLite Storage Backend
- * 
+ *
  * Stores operations in SQLite database for Node.js environments.
  * Requires better-sqlite3 or similar SQLite library.
  */
@@ -480,9 +483,9 @@ export class SQLiteStorage extends BaseStorage {
       // Try to dynamically import better-sqlite3
       // This is optional and will fail gracefully if not installed
       const Database = await this.loadSQLiteModule();
-      
+
       this.db = new Database(this.options.databaseName || ':memory:');
-      
+
       // Create operations table
       this.db.exec(`
         CREATE TABLE IF NOT EXISTS operations (
@@ -511,19 +514,23 @@ export class SQLiteStorage extends BaseStorage {
     } catch (error) {
       throw new Error(
         `Failed to initialize SQLite storage: ${error instanceof Error ? error.message : String(error)}. ` +
-        `Make sure 'better-sqlite3' is installed: npm install better-sqlite3`
+          `Make sure 'better-sqlite3' is installed: npm install better-sqlite3`
       );
     }
   }
 
   private async loadSQLiteModule(): Promise<any> {
-    // Try to load better-sqlite3
+    // Guard: only available in Node.js
+    if (typeof process === 'undefined' || !process.versions || !process.versions.node) {
+      throw new Error('SQLite storage requires Node.js environment');
+    }
+
     try {
-      // In ESM context, we need to use dynamic import
-      const module = await import('better-sqlite3');
-      return module.default || module;
+      // Use require for Node.js (won't be bundled)
+      // eslint-disable-next-line global-require, @typescript-eslint/no-var-requires
+      const Database = require('better-sqlite3');
+      return Database;
     } catch {
-      // Fallback: throw error with installation instructions
       throw new Error('SQLite module not found');
     }
   }
@@ -533,10 +540,7 @@ export class SQLiteStorage extends BaseStorage {
 
     // Check and enforce max operations limit
     const count = await this.getCount();
-    if (
-      this.options.maxOperations &&
-      count >= this.options.maxOperations
-    ) {
+    if (this.options.maxOperations && count >= this.options.maxOperations) {
       // Remove oldest operation
       const oldest = await this.findOldestOperation();
       if (oldest) {

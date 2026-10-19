@@ -66,6 +66,13 @@ export class StatefulMockHttp {
     return this.callLog.map(([, path]) => path);
   }
 
+  getCallCount(method: RequestMethod, path: string | RegExp): number {
+    return this.callLog.filter(
+      ([callMethod, callPath]) =>
+        callMethod === method && matchesPath(path, callPath)
+    ).length;
+  }
+
   assertCallOrder(expectedPaths: string[]): void {
     expect(this.getPaths()).toEqual(expectedPaths);
   }
