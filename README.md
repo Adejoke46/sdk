@@ -529,6 +529,45 @@ const client = new DorisioClient({
 });
 ```
 
+### Performance Monitoring
+
+Opt in to per-request latency tracking, cache hit-rate, and memory usage. Monitoring is
+disabled by default, so it adds no overhead unless enabled.
+
+```typescript
+const client = new DorisioClient({
+  baseUrl: 'https://api.dorisio.com',
+  monitoring: {
+    enabled: true,
+    collectMetrics: true,
+    onMetrics: (m) => {
+      console.log(`avg ${m.avgLatency}ms, cache hit-rate ${m.cacheHitRate}`);
+    },
+  },
+});
+
+await client.getCreator('creator-123');
+
+// Read an aggregated snapshot at any time.
+const stats = client.getPerformanceMetrics();
+console.log(stats.avgLatency);   // average latency across requests (ms)
+console.log(stats.cacheHitRate); // hits / (hits + misses), 0 - 1
+console.log(stats.requests, stats.errors, stats.errorRate);
+console.log(stats.methodStats);  // per-method request count + average latency
+console.log(stats.memoryUsage?.heapUsed); // process heap, null outside Node
+```
+
+`getPerformanceMetrics()` returns:
+
+- `requests`, `errors`, `errorRate` — request/error counters
+- `avgLatency` — average latency per request (ms)
+- `cacheHits`, `cacheMisses`, `cacheHitRate` — response cache effectiveness
+- `methodStats` — `{ count, avgLatency }` keyed by SDK / HTTP method
+- `memoryUsage` — `{ heapUsed, heapTotal, rss, external }`, or `null` when
+  `process.memoryUsage()` is unavailable (browser / edge runtimes)
+
+The legacy `enableMetrics` / `metricsCallback` options continue to work.
+
 ### Environment Variables
 
 ```bash
@@ -650,6 +689,21 @@ See **[docs/ERROR_HANDLING.md](./docs/ERROR_HANDLING.md)** for the full guide, i
 | `TimeoutError` | 408 | `TIMEOUT` | — |
 | `NetworkError` | 0 | `NETWORK_ERROR` | — |
 | `NotFoundError` | 404 | `NOT_FOUND` | — |
+
+### Rate-limit retries
+
+For idempotent requests, HTTP 429 responses retry within the configured attempt budget.
+`Retry-After` accepts delta-seconds or an HTTP date and controls the wait without jitter.
+`X-RateLimit-Reset` accepts a Unix timestamp in seconds or an HTTP date as a fallback.
+`RateLimitError.retryAfter` exposes the wait in seconds. `RateLimitError.rateLimit` stores the parsed
+`limit`, `remaining`, and `reset` values. `reset` is a Unix timestamp in seconds.
+
+Without a valid server delay, 429 retries use the configured exponential backoff,
+capped at 30 seconds by default. `HttpClient` uses `retryBaseDelayMs`, `retryMaxDelayMs`,
+and `retryJitter`. Jitter adds 0 to 100 milliseconds and is disabled by default for
+`HttpClient` and enabled by default for `RetryManager`.
+Server delays can exceed that cap. Explicit error-handler delays, throw decisions,
+and fallback values take precedence.
 
 ### Error recovery examples
 

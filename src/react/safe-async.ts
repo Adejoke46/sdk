@@ -34,6 +34,13 @@ export function isRethrownByHook(reason: unknown): boolean {
   return typeof reason === 'object' && reason !== null && rethrown.has(reason);
 }
 
+/** True when `reason` is an abort-shaped error (caller cancelled the request). */
+export function isAbortError(reason: unknown): boolean {
+  if (!reason || typeof reason !== 'object') return false;
+  const name = (reason as { name?: unknown }).name;
+  return name === 'AbortError' || name === 'CanceledError';
+}
+
 /** Extract a human-readable message from anything that can be thrown. */
 export function getErrorMessage(err: unknown, fallback: string): string {
   if (typeof err === 'string' && err) return err;
@@ -55,7 +62,12 @@ export function safely(label: string, fn: () => void): void {
 
 /** Attach a logging handler to a fire-and-forget promise so it can't go unhandled. */
 export function logRejection(promise: Promise<unknown>, label: string): void {
-  promise.catch((err) => console.error(`[dorisio] ${label} failed:`, err));
+  promise.catch((err) => {
+    // Aborting an in-flight request is expected (unmount / superseded fetch)
+    // and must not surface as an error log.
+    if (isAbortError(err)) return;
+    console.error(`[dorisio] ${label} failed:`, err);
+  });
 }
 
 /**
