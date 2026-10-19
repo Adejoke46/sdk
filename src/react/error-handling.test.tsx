@@ -19,7 +19,9 @@ import {
   cleanup,
 } from '@testing-library/react';
 import { DorisioProvider } from './DorisioProvider';
+import { DorisioBoundary } from './DorisioBoundary';
 import { useCreateTip } from './useCreateTip';
+import { AuthError, PaymentError, ValidationError, RateLimitError, ServerError } from '../types/errors';
 import { useWallet } from './useWallet';
 import { useCreatorBalance } from './useCreatorBalance';
 import { useTransactionHistory } from './useTransactionHistory';
@@ -596,5 +598,171 @@ describe('DorisioProvider error handling', () => {
       fire(err);
       expect(consoleError).not.toHaveBeenCalled();
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// DorisioBoundary
+// ---------------------------------------------------------------------------
+
+describe('DorisioBoundary', () => {
+  function ThrowOnRender({ error }: { error: unknown }) {
+    throw error;
+    return null;
+  }
+
+  it('renders children when no error occurs', () => {
+    render(
+      <DorisioBoundary>
+        <p>healthy</p>
+      </DorisioBoundary>
+    );
+    expect(screen.getByText('healthy')).toBeTruthy();
+  });
+
+  it('renders the default fallback when a DorisioError is thrown during render', () => {
+    render(
+      <DorisioBoundary>
+        <ThrowOnRender error={new AuthError('auth failed', 401)} />
+      </DorisioBoundary>
+    );
+    expect(screen.getByText('Something went wrong')).toBeTruthy();
+    expect(screen.getByText('auth failed')).toBeTruthy();
+  });
+
+  it('catches non-SDK errors and still renders the fallback UI', () => {
+    render(
+      <DorisioBoundary>
+        <ThrowOnRender error={new Error('plain runtime error')} />
+      </DorisioBoundary>
+    );
+    expect(screen.getByText('Something went wrong')).toBeTruthy();
+    expect(screen.getByText('plain runtime error')).toBeTruthy();
+  });
+
+  it('wraps non-Error thrown values in an Error and renders the fallback', () => {
+    render(
+      <DorisioBoundary>
+        <ThrowOnRender error='string error' />
+      </DorisioBoundary>
+    );
+    expect(screen.getByText('Something went wrong')).toBeTruthy();
+    expect(screen.getByText('string error')).toBeTruthy();
+  });
+
+  it('invokes onError with the DorisioError when an SDK error is caught', () => {
+    const onError = vi.fn();
+    const err = new AuthError('auth failed', 401, 'UNAUTHORIZED');
+    render(
+      <DorisioBoundary onError={onError}>
+        <ThrowOnRender error={err} />
+      </DorisioBoundary>
+    );
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(onError.mock.calls[0]?.[0]).toBe(err);
+    expect(onError.mock.calls[0]?.[0]?.message).toBe('auth failed');
+    expect(onError.mock.calls[0]?.[0]?.code).toBe('UNAUTHORIZED');
+  });
+
+  it('passes React error info to onError', () => {
+    const onError = vi.fn();
+    render(
+      <DorisioBoundary onError={onError}>
+        <ThrowOnRender error={new PaymentError('pay failed')} />
+      </DorisioBoundary>
+    );
+    expect(onError).toHaveBeenCalledTimes(1);
+    const [, info] = onError.mock.calls[0] ?? [];
+    expect(info?.componentStack).toContain('ThrowOnRender');
+  });
+
+  it('does not invoke onError for non-SDK errors', () => {
+    const onError = vi.fn();
+    render(
+      <DorisioBoundary onError={onError}>
+        <ThrowOnRender error={new Error('plain')} />
+      </DorisioBoundary>
+    );
+    expect(onError).not.toHaveBeenCalled();
+    expect(screen.getByText('Something went wrong')).toBeTruthy();
+  });
+
+  it('renders a custom fallback function receiving the error and a reset function', () => {
+    render(
+      <DorisioBoundary
+        fallback={(error, reset) => (
+          <div>
+            <span>{error?.message}</span>
+            <button onClick={reset}>reset</button>
+          </div>
+        )}
+      >
+        <ThrowOnRender error={new ValidationError('bad input')} />
+      </DorisioBoundary>
+    );
+    expect(screen.getByText('bad input')).toBeTruthy();
+    expect(screen.getByText('reset')).toBeTruthy();
+  });
+
+  it('renders a static custom fallback', () => {
+    render(
+      <DorisioBoundary fallback={<div>custom fallback</div>}>
+        <ThrowOnRender error={new Error('boom')} />
+      </DorisioBoundary>
+    );
+    expect(screen.getByText('custom fallback')).toBeTruthy();
+  });
+
+  it('resets the boundary and re-renders children on explicit reset only', () => {
+    const flag = { explode: true };
+    function Flaky() {
+      if (flag.explode) throw new Error('render exploded');
+      return <p>healthy</p>;
+    }
+    render(
+      <DorisioBoundary>
+        <Flaky />
+      </DorisioBoundary>
+    );
+    expect(screen.getByText('Something went wrong')).toBeTruthy();
+    flag.explode = false;
+    act(() => {
+      fireEvent.click(screen.getByText('Try again'));
+    });
+    expect(screen.getByText('healthy')).toBeTruthy();
+  });
+
+  const sdkCases = [
+    ['AuthError', new AuthError('auth failed', 401), 'auth failed'],
+    ['PaymentError', new PaymentError('pay failed'), 'pay failed'],
+    ['ValidationError', new ValidationError('bad input'), 'bad input'],
+    ['RateLimitError', new RateLimitError('slow down', 30), 'slow down'],
+  ];
+
+  sdkCases.forEach(([name, error, message]) => {
+    it(`renders the fallback for ${name}`, () => {
+      render(
+        <DorisioBoundary>
+          <ThrowOnRender error={error} />
+        </DorisioBoundary>
+      );
+      expect(screen.getByText('Something went wrong')).toBeTruthy();
+      expect(screen.getByText(message)).toBeTruthy();
+    });
+  });
+
+  it('does not propagate the caught error to the caller', () => {
+    let renderError: unknown;
+    try {
+      render(
+        <DorisioBoundary>
+          <ThrowOnRender error={new ServerError('server down', 500)} />
+        </DorisioBoundary>
+      );
+    } catch (err) {
+      renderError = err;
+    }
+    expect(renderError).toBeUndefined();
+    expect(screen.getByText('Something went wrong')).toBeTruthy();
   });
 });
