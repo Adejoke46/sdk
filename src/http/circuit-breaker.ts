@@ -23,24 +23,28 @@ export interface CircuitBreakerOptions {
   now?: () => number;
 }
 
+// Alias for backwards compatibility
+export type CircuitBreakerConfig = CircuitBreakerOptions;
+
 export interface CircuitBreakerStatus {
   key: string;
-  state: CircucuitState;
+  state: CircuitState;
   failures: number;
   successes: number;
   lastFailureAt?: number;
   openedAt?: number;
 }
 
-export class CircuitBreakerOpenError extends Error {
+// Alias for index.ts exports
+export type CircuitBreakerStats = CircuitBreakerStatus;
+
+export class CircuitOpenError extends Error {
   readonly code = 'CIRCUIT_BREAKER_OPEN';
   readonly key: string;
   readonly retryAfter: number;
 
   constructor(key: string, retryAfter: number) {
-    super(
-      `Circuit breaker is open for "${key}". Retry after ${retryAfter}ms.`,
-    );
+    super(`Circuit breaker is open for "${key}". Retry after ${retryAfter}ms.`);
     this.name = 'CircuitBreakerOpenError';
     this.key = key;
     this.retryAfter = retryAfter;
@@ -67,11 +71,7 @@ export class CircuitBreaker {
   private readonly resetTimeout: number;
   private readonly halfOpenRequests: number;
   private readonly successThreshold: number;
-  private readonly onStateChange?: (
-    from: CircuitState,
-    to: CircuitState,
-    key: string,
-  ) => void;
+  private readonly onStateChange?: (from: CircuitState, to: CircuitState, key: string) => void;
   private readonly clock: () => number;
   private readonly entries = new Map<string, CircuitEntry>();
 
@@ -118,7 +118,7 @@ export class CircuitBreaker {
   /** Throws a CircuitBreakerOpenError if the circuit is open. */
   assertCanAttempt(key: string): void {
     if (!this.canAttempt(key)) {
-      throw new CircuitBreakerOpenError(key, this.remainingResetTime(key));
+      throw new CircuitOpenError(key, this.remainingResetTime(key));
     }
   }
 
