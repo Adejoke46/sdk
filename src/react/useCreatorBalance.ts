@@ -9,10 +9,11 @@
  *   the wallet filter or hits a stale creator after rapid switches.
  */
 
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useRef, useDebugValue } from 'react';
 import { useDorisio } from './DorisioProvider';
 import { ApiCreatorEarningsSchema } from '../types/schemas';
 import { logRejection, runSafely } from './safe-async';
+import { formatDebugValue } from './debug-format';
 
 export interface CreatorBalance {
   totalEarnings: number;
@@ -41,6 +42,12 @@ export interface UseCreatorBalanceActions {
  * Optionally auto-fetches on mount if creatorId is provided. Auto-fetch failures are
  * exposed via `error` and logged to the console rather than raised as unhandled
  * rejections; manual `fetchBalance()` / `refetch()` calls reject with the original error.
+ *
+ * @debugValue Displays `{ loading, error, balance, lastUpdated }` in React DevTools.
+ *   - `loading` (boolean): whether a request is in flight
+ *   - `error` (string | undefined): last error message, if any
+ *   - `balance` (object | undefined): { totalEarnings, pendingBalance } of the creator, if loaded
+ *   - `lastUpdated` (number | undefined): timestamp of the last successful fetch
  *
  * @example
  * ```tsx
@@ -231,6 +238,17 @@ export function useCreatorBalance(
       logRejection(fetchBalance(initialCreatorId), 'useCreatorBalance auto-fetch');
     }
   }, [autoFetch, initialCreatorId, fetchBalance]);
+
+  useDebugValue(
+    formatDebugValue({
+      loading: state.loading,
+      error: state.error,
+      balance: state.balance
+        ? { totalEarnings: state.balance.totalEarnings, pendingBalance: state.balance.pendingBalance }
+        : undefined,
+      lastUpdated: state.lastUpdated,
+    })
+  );
 
   return {
     ...state,

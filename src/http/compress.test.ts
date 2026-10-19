@@ -42,7 +42,7 @@ describe('compressRequestBody', () => {
   it('sets Content-Encoding and clears a stale Content-Length', async () => {
     const headers = { 'Content-Length': '99999' };
     const prepared = await prepareRequestBody(largeBody, headers);
-    const compressedBytes = new Uint8Array(await (prepared.body as Blob).arrayBuffer());
+    const compressedBytes = prepared.body as Uint8Array;
 
     expect(prepared.headers).toEqual({ 'Content-Encoding': 'gzip' });
     expect(gunzipSync(compressedBytes).toString()).toBe(largeBody);

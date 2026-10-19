@@ -56,10 +56,11 @@ export class RequestSigner {
       return { secretKey: this.secret, activeKeyId: this.keyId };
     }
     const activeKeyId = this.keyId || Object.keys(this.secret)[0];
-    if (!activeKeyId || !this.secret[activeKeyId]) {
+    const activeSecret = activeKeyId ? this.secret[activeKeyId] : undefined;
+    if (!activeKeyId || !activeSecret) {
       throw new Error('RequestSigner: No valid secret found for active key ID');
     }
-    return { secretKey: this.secret[activeKeyId], activeKeyId };
+    return { secretKey: activeSecret, activeKeyId };
   }
 
   /**

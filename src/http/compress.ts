@@ -35,8 +35,7 @@ export async function prepareRequestBody(
     Object.entries(headers).filter(([name]) => name.toLowerCase() !== 'content-length')
   );
   requestHeaders['Content-Encoding'] = compressed.algorithm;
-  const compressedBuffer = new Uint8Array(compressed.body).buffer;
-  return { body: new Blob([compressedBuffer]), headers: requestHeaders };
+  return { body: compressed.body, headers: requestHeaders };
 }
 
 export async function compressRequestBody(
@@ -55,27 +54,66 @@ export async function compressRequestBody(
   if (input.byteLength <= threshold) return undefined;
 
   if (algorithm === 'gzip') {
-    if (typeof CompressionStream === 'undefined') {
-      throw new Error('Gzip compression is not supported in this runtime');
-    }
-
-    const stream = new Blob([input]).stream().pipeThrough(new CompressionStream('gzip'));
-    return {
-      body: new Uint8Array(await new Response(stream).arrayBuffer()),
-      algorithm,
-    };
+    const compressed = await gzipSync(input);
+    return { body: compressed, algorithm };
   }
 
   if (algorithm === 'brotli') {
-    const zlib = await import('node:zlib');
-    const compressed = await new Promise<Uint8Array>((resolve, reject) => {
-      zlib.brotliCompress(input, (error, result) => {
-        if (error) reject(error);
-        else resolve(result);
-      });
-    });
+    const compressed = await brotliCompressSync(input);
     return { body: compressed, algorithm };
   }
 
   throw new Error(`Unsupported compression algorithm: ${String(algorithm)}`);
+}
+
+export async function decompressResponseBody(
+  body: ArrayBuffer | null,
+  encoding: string
+): Promise<string> {
+  if (!body || !encoding) {
+    return body ? new TextDecoder().decode(body) : '';
+  }
+
+  const algorithm = encoding.toLowerCase().trim();
+  const input = new Uint8Array(body);
+
+  if (algorithm === 'gzip') {
+    return decodeStream(input, 'gunzip');
+  }
+
+  if (algorithm === 'br') {
+    return decodeStream(input, 'brotliDecompress');
+  }
+
+  return new TextDecoder().decode(input);
+}
+
+async function gzipSync(input: Uint8Array): Promise<Uint8Array> {
+  const zlib = await import('node:zlib');
+  return new Promise<Uint8Array>((resolve, reject) => {
+    zlib.gzip(input, (error, result) => {
+      if (error) reject(error);
+      else resolve(result);
+    });
+  });
+}
+
+async function brotliCompressSync(input: Uint8Array): Promise<Uint8Array> {
+  const zlib = await import('node:zlib');
+  return new Promise<Uint8Array>((resolve, reject) => {
+    zlib.brotliCompress(input, (error, result) => {
+      if (error) reject(error);
+      else resolve(result);
+    });
+  });
+}
+
+async function decodeStream(input: Uint8Array, op: 'gunzip' | 'brotliDecompress'): Promise<string> {
+  const zlib = await import('node:zlib');
+  return new Promise<string>((resolve, reject) => {
+    zlib[op](input, (error, result) => {
+      if (error) reject(error);
+      else resolve(new TextDecoder().decode(result));
+    });
+  });
 }

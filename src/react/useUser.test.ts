@@ -9,7 +9,7 @@ import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act, cleanup } from '@testing-library/react';
 import { DorisioProvider } from './DorisioProvider';
-import { useUser } from './useUser';
+import { useUser, USER_CACHE_TTL_MS } from './useUser';
 import { User, UpdateUserRequest } from '../types/models';
 import { ApiError } from '../types/errors';
 
@@ -31,6 +31,9 @@ describe('useUser Hook', () => {
       request: mockRequest,
       setToken: vi.fn(),
       clearToken: vi.fn(),
+      isOnline: vi.fn(() => true),
+      setOnline: vi.fn(),
+      getOfflineStats: vi.fn(() => null),
     };
   });
 
@@ -370,6 +373,222 @@ describe('useUser Hook', () => {
       await act(async () => {
         resolvePromise({ success: true, data: { id: 'user-123' } });
       });
+    });
+  });
+
+  describe('offline fallback and cache flags', () => {
+    const mockCurrentUser: User = {
+      id: 'current-user-1',
+      email: 'current@example.com',
+      name: 'Current User',
+      role: 'fan',
+      verified: true,
+      createdAt: '2024-01-01T00:00:00Z',
+    };
+
+    const offlineError = new ApiError('Network unreachable', 0);
+
+    function goOffline() {
+      mockClient.isOnline.mockReturnValue(false);
+      mockRequest.mockRejectedValueOnce(offlineError);
+    }
+
+    function goOnline(data: User) {
+      mockClient.isOnline.mockReturnValue(true);
+      mockRequest.mockResolvedValueOnce({ success: true, data });
+    }
+
+    async function primeOnline(result: any, data: User) {
+      goOnline(data);
+      await act(async () => {
+        await result.current.fetchCurrentUser();
+      });
+      expect(result.current.isCached).toBe(false);
+      expect(result.current.user).toEqual(data);
+    }
+
+    it('returns cached user data with isCached: true when fetch fails offline (fetchCurrentUser)', async () => {
+      const { result } = renderHook(() => useUser(), { wrapper });
+      await primeOnline(result, mockCurrentUser);
+
+      goOffline();
+      await act(async () => {
+        await result.current.fetchCurrentUser();
+      });
+      expect(result.current.user).toEqual(mockCurrentUser);
+      expect(result.current.isCached).toBe(true);
+      expect(result.current.isAuthenticated).toBe(true);
+      expect(result.current.error).toBeNull();
+      expect(result.current.loading).toBe(false);
+    });
+
+    it('returns cached user data with isCached: true when fetchUser fails offline', async () => {
+      const user123 = { ...mockCurrentUser, id: 'user-123' };
+      const { result } = renderHook(() => useUser(), { wrapper });
+
+      goOnline(user123);
+      await act(async () => {
+        await result.current.fetchUser('user-123');
+      });
+      expect(result.current.isCached).toBe(false);
+
+      goOffline();
+      await act(async () => {
+        await result.current.fetchUser('user-123');
+      });
+
+      expect(result.current.user).toEqual(user123);
+      expect(result.current.isCached).toBe(true);
+      expect(result.current.isAuthenticated).toBe(true);
+    });
+
+    it('isCached is false after a successful online fetch', async () => {
+      goOnline(mockCurrentUser);
+
+      const { result } = renderHook(() => useUser(), { wrapper });
+
+      await act(async () => {
+        await result.current.fetchCurrentUser();
+      });
+
+      expect(result.current.user).toEqual(mockCurrentUser);
+      expect(result.current.isCached).toBe(false);
+      expect(result.current.isAuthenticated).toBe(true);
+    });
+
+    it('refreshes cached data and clears isCached when back online (fetchCurrentUser)', async () => {
+      const updatedUser = { ...mockCurrentUser, name: 'Updated Name' };
+      const { result } = renderHook(() => useUser(), { wrapper });
+      await primeOnline(result, mockCurrentUser);
+      expect(result.current.isCached).toBe(false);
+
+      goOffline();
+      await act(async () => {
+        await result.current.fetchCurrentUser();
+      });
+      expect(result.current.isCached).toBe(true);
+
+      goOnline(updatedUser);
+      await act(async () => {
+        await result.current.fetchCurrentUser();
+      });
+
+      expect(result.current.user).toEqual(updatedUser);
+      expect(result.current.isCached).toBe(false);
+      expect(mockRequest).toHaveBeenLastCalledWith('GET', '/users/me', undefined, {
+        timeout: 10000,
+      });
+    });
+
+    it('refreshes cached data and clears isCached when back online (fetchUser)', async () => {
+      const first = { ...mockCurrentUser, id: 'user-123' };
+      const updated = { ...first, name: 'Updated Name' };
+      const { result } = renderHook(() => useUser(), { wrapper });
+
+      goOnline(first);
+      await act(async () => {
+        await result.current.fetchUser('user-123');
+      });
+      expect(result.current.isCached).toBe(false);
+
+      goOffline();
+      await act(async () => {
+        await result.current.fetchUser('user-123');
+      });
+      expect(result.current.isCached).toBe(true);
+
+      goOnline(updated);
+      await act(async () => {
+        await result.current.fetchUser('user-123');
+      });
+
+      expect(result.current.user).toEqual(updated);
+      expect(result.current.isCached).toBe(false);
+    });
+
+    it('allowCached: false skips cache and returns null when offline with no fresh data', async () => {
+      goOffline();
+
+      const { result } = renderHook(() => useUser(), { wrapper });
+
+      await act(async () => {
+        await result.current.fetchCurrentUser({ allowCached: false });
+      });
+
+      expect(result.current.user).toBeNull();
+      expect(result.current.isCached).toBe(false);
+      expect(result.current.isAuthenticated).toBe(false);
+      expect(result.current.error).toBe(offlineError);
+    });
+
+    it('allowCached: false still succeeds online and returns fresh data', async () => {
+      goOnline(mockCurrentUser);
+
+      const { result } = renderHook(() => useUser(), { wrapper });
+
+      await act(async () => {
+        await result.current.fetchCurrentUser({ allowCached: false });
+      });
+
+      expect(result.current.user).toEqual(mockCurrentUser);
+      expect(result.current.isCached).toBe(false);
+      expect(result.current.isAuthenticated).toBe(true);
+    });
+
+    it('expired cache is not returned offline (TTL respected)', async () => {
+      const now = Date.now();
+      const dateNowSpy = vi.spyOn(Date, 'now').mockImplementation(() => now);
+      try {
+        const { result } = renderHook(() => useUser(), { wrapper });
+        await primeOnline(result, mockCurrentUser);
+
+        // Advance time beyond TTL so the entry expires
+        dateNowSpy.mockImplementation(() => now + USER_CACHE_TTL_MS + 1);
+
+        goOffline();
+        await act(async () => {
+          await result.current.fetchCurrentUser();
+        });
+
+        expect(result.current.user).toBeNull();
+        expect(result.current.isCached).toBe(false);
+        expect(result.current.error).toBe(offlineError);
+      } finally {
+        dateNowSpy.mockRestore();
+      }
+    });
+
+    it('returns non-expired cache when offline within TTL', async () => {
+      const now = Date.now();
+      const dateNowSpy = vi.spyOn(Date, 'now').mockImplementation(() => now);
+      try {
+        const { result } = renderHook(() => useUser(), { wrapper });
+        await primeOnline(result, mockCurrentUser);
+
+        goOffline();
+        await act(async () => {
+          await result.current.fetchCurrentUser();
+        });
+
+        expect(result.current.user).toEqual(mockCurrentUser);
+        expect(result.current.isCached).toBe(true);
+      } finally {
+        dateNowSpy.mockRestore();
+      }
+    });
+
+    it('clears error when serving cached data offline', async () => {
+      const staleUser = { ...mockCurrentUser, email: 'stale@example.com' };
+      const { result } = renderHook(() => useUser(), { wrapper });
+      await primeOnline(result, staleUser);
+
+      goOffline();
+      await act(async () => {
+        await result.current.fetchCurrentUser();
+      });
+      expect(result.current.error).toBeNull();
+      expect(result.current.user).toEqual(staleUser);
+      expect(result.current.isCached).toBe(true);
     });
   });
 });
